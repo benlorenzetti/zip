@@ -22,10 +22,11 @@ int zip_search_filename (zip_object, const char*);                            /*
 int zip_get_file_length (zip_object, int);                                    /*
       @param: n, the local file number.                                       */
 
-void zip_get_file (zip_object, int, unsigned char*);                          /*
+int  zip_get_file (zip_object, int, unsigned char*);                          /*
       @param: n, the local file number
-      @param: destination                                                     */
+      @param: destination
+      return: size                                                            */
 
 int   zip_error_code (zip_object);
-char* zip_error_name (zip_object, char* dest);
+char* zip_error_name (int, char*);
 
