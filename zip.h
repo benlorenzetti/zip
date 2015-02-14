@@ -1,9 +1,10 @@
+#ifndef ZIP_H
+#define ZIP_H
 /******************************************************************************
  *                                                                            *
  ******************************************************************************/
 
-struct zip_Object;
-typedef zip_Object* zip_object;
+typedef struct zip_Object* zip_object;
 
 void zip_constructor (zip_object);
 void zip_destructor (zip_object);
@@ -30,3 +31,5 @@ int  zip_get_file (zip_object, int, unsigned char*);                          /*
 int   zip_error_code (zip_object);
 char* zip_error_name (int, char*);
 
+
+#endif

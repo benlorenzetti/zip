@@ -5,9 +5,9 @@ CFLAGS = -c
 exe:	$(OBJS)
 	$(CC) $(OBJS) -o exe
 
-zip.o:	zip.cpp
-	$(CC) $(CFLAGS) zip.cpp
+zip.o:	zip.c
+	$(CC) $(CFLAGS) zip.c
 
 test.o:	zip.o
-	$(CC) $(CFLAGS) test.cpp
+	$(CC) $(CFLAGS) test.c
 
