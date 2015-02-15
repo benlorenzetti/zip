@@ -24,7 +24,6 @@ struct zip_Object {
 };
 
 void zip_constructor (struct zip_Object** ptr_ptr) {
-	puts ("constructor...");
 
 	/* allocate the object in memory */
 	*ptr_ptr = (struct zip_Object*) malloc (sizeof (struct zip_Object));
@@ -38,19 +37,16 @@ void zip_constructor (struct zip_Object** ptr_ptr) {
 }
 
 void zip_destructor (struct zip_Object** ptr_ptr) {
-	puts ("destructor...");
+
 	struct zip_Object* obj_ptr = *ptr_ptr;
 	
 	/* close all open disks */
 	for (int i=0; i< obj_ptr->disk_array_size; i++) {
-		puts ("attemping iteration...");
 		fclose (obj_ptr->disk_array[i]);
 	}
 	
 	/* free the object from memory */
-	puts ("free object...");
 	free (obj_ptr);
-	puts ("leaving destructor...");
 }
 
 /* return ZIP_OPEN_SUCCESS, ZIP_OPEN_NEED_ADDITIONAL_DISK, or ZIP_OPEN_FAILURE */
@@ -66,7 +62,7 @@ int zip_open_disk (struct zip_Object* obj, const char* fn) {
 		obj->disk_array[obj->disk_array_size++] = fp;
 
 	/* attempt to find the End of Central Directory Record */
-	u32 file_size, eocd_pos, cd_pos, cur_pos, cur_val;
+	u32 file_size, eocdr_pos, cd_pos, cur_pos, cur_val;
 
 	if (fseek (fp, 0, SEEK_END))
 		return ZIP_OPEN_FAILURE;
@@ -74,29 +70,47 @@ int zip_open_disk (struct zip_Object* obj, const char* fn) {
 
 	if (fseek (fp, (-1)*ZIP_EOCDR_FIXED_PORTION_SIZE, SEEK_END))
 		return ZIP_OPEN_FAILURE;
-	cur_pos = file_size - ZIP_EOCDR_FIXED_PORTION_SIZE;
 
-	while (cur_pos >= 0) {
+	eocdr_pos = 0;
+	cur_pos = ftell (fp);
+	do {
 		cur_val = zip_get_field (fp, ZIP_SIGNATURE_FIELD_SIZE);
+		cur_pos += ZIP_SIGNATURE_FIELD_SIZE;
+
 		if (cur_val == ZIP_EOCDR_SIGNATURE) {
 			/* possible match, verify with comment length field. */
-			u32 offset, file_comment_length;
+			u32 pos_pos, fcl_offset, fcl;
+			pos_pos = cur_pos - ZIP_SIGNATURE_FIELD_SIZE;
+			fcl_offset = ZIP_EOCDR_FIXED_PORTION_SIZE - ZIP_SIGNATURE_FIELD_SIZE - ZIP_LENGTH_FIELD_SIZE;
 
-			offset = ZIP_EOCDR_FIXED_PORTION_SIZE - ZIP_SIGNATURE_FIELD_SIZE - ZIP_LENGTH_FIELD_SIZE;
-			if (fseek (fp, offset, SEEK_CUR))
+			if (fseek (fp, fcl_offset, SEEK_CUR))
 				return ZIP_OPEN_FAILURE;
-			file_comment_length = zip_get_field (fp, ZIP_LENGTH_FIELD_SIZE);
+			cur_pos += fcl_offset;
 
-			if (file_size == (cur_pos + file_comment_length + ZIP_EOCDR_FIXED_PORTION_SIZE))
+			fcl = zip_get_field (fp, ZIP_LENGTH_FIELD_SIZE);
+			cur_pos += ZIP_LENGTH_FIELD_SIZE;
+
+			if (file_size == cur_pos) {
+				eocdr_pos = pos_pos;
 				break;
+			}
+			else
+				cur_pos = pos_pos;
 		}
 		else {
 			/* if not a match, then back up to a new starting position and continue */
-			cur_pos--;
 			if (fseek (fp, (-1)-ZIP_SIGNATURE_FIELD_SIZE, SEEK_CUR))
 				return ZIP_OPEN_FAILURE;
+			cur_pos -= (-1) - ZIP_SIGNATURE_FIELD_SIZE;
 		}
-	}
+	} while (cur_pos >= 0);
+
+	if (!eocdr_pos)
+		return ZIP_OPEN_NEED_ADDITIONAL_DISK;
+	else
+		printf ("EOCDR found at %d\n", eocdr_pos);
+
+	/* EOCDR is found, now parse CD records */
 	return -999;	
 }
 
