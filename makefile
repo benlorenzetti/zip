@@ -1,5 +1,5 @@
 OBJS = zip.o test.o
-CC = gcc
+CC = c99
 CFLAGS = -c
 
 exe:	$(OBJS)

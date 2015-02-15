@@ -6,11 +6,13 @@
 
 typedef struct zip_Object* zip_object;
 
-void zip_constructor (zip_object);
-void zip_destructor (zip_object);
+void zip_constructor (zip_object*);
+void zip_destructor (zip_object*);
 
-int zip_open_disk (zip_object, const char*);                                  /*
-      return: 0 upon error, -1 if more disks are needed, or 1 on success.     */
+#define ZIP_OPEN_SUCCESS 1
+#define ZIP_OPEN_NEED_ADDITIONAL_DISK -1
+#define ZIP_OPEN_FAILURE 0
+int zip_open_disk (zip_object, const char*);
 
 #define ZIP_MAX_FILENAME_LENGTH 1000
 char* zip_get_filename (zip_object, int, char*);                              /*
