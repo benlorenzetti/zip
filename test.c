@@ -12,7 +12,11 @@ int main () {
 	printf ("file opened.\n");
 
 	char temp[1000];
-	printf ("local filename: %s\n",	zip_get_filename (zip1, 17, temp, 1000));
+	printf ("local filename: %s\n",	zip_get_filename (zip1, 3, temp, 1000));
+
+	printf ("index of content.xml: %d\n", zip_search_filename (zip1, "content.xml"));
+
+	printf ("size of content.xml: %d\n", (int) zip_get_file_length (zip1, 3));
 
 	zip_destructor (&zip1);
 }

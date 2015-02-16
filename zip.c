@@ -310,14 +310,33 @@ char* zip_get_filename (struct zip_Object* obj, int n, char* dest, int size) {
 }
 
 int zip_search_filename (struct zip_Object* obj, const char* fn) {
-	return 0;
+	
+	cdfh header_i;
+	header_i = obj->central_dir;
+	for (int i=0; i< obj->total_cd_entries; i++) {
+		if (!strcmp (fn, header_i->file_name))
+			return i;
+		else
+			header_i = header_i->next_cdfh;
+	}
+	return -1;
 }
 
-int zip_get_file_length (struct zip_Object* obj, int n) {
-	return 0;
+unsigned long zip_get_file_length (struct zip_Object* obj, int n) {
+	
+	if (n >= obj->total_cd_entries) {
+		return 0;
+	}
+	else {
+		cdfh header_n;
+		header_n = obj->central_dir;
+		for (int i=0; i<n; i++)
+			header_n = header_n->next_cdfh;
+		return header_n->uncomp_size;
+	}
 }
 
-int zip_get_file (struct zip_Object* obj, int n, u8* dest) {
+u32 zip_get_file (struct zip_Object* obj, int n, u8** dest_ptr) {
 	return 0;
 }
 
