@@ -14,7 +14,7 @@ typedef unsigned long u32;
 
 static u32 zip_get_field (FILE*, int); /* file stream, field size (bytes) */
 
-/* Below are the fundamental state of a zip object. They can occur only
+/* Below are the fundamental states of the zip object. They can occur only
    in increasing order, but some state may be skipped. For example calling
    zip_constructor() followed by zip_append_new_file() causes a skip from
    ZIP_STATE_WITHOUT_FORM to ZIP_STATE_APPEND_FILES.
@@ -22,11 +22,33 @@ static u32 zip_get_field (FILE*, int); /* file stream, field size (bytes) */
 #define ZIP_STATE_WITHOUT_FORM 0
 #define ZIP_STATE_CENTRAL_DIRECTORY_COMPLETE 1
 
+typedef struct zip_central_directory_file_header* cdfh;
+struct zip_central_directory_file_header {
+	u16 version;
+	u16 bit_flag;
+	u16 comp_method;
+	u32 crc_32;
+	u32 comp_size;
+	u32 uncomp_size;
+	u16 fnl, efl, fcl; /* file name length, extra field len, file comment len */
+	u16 disk;
+	u16 int_attr;
+	u32 ext_attr;
+	u32 offset;
+	char* file_name;
+	u8* extra_field;
+	char* file_comment;
+	cdfh next_cdfh, prev_cdfh;
+};
+
 struct zip_Object {
 	int state;
 	FILE* disks[ZIP_MAXIMUM_NUMBER_OF_DISKS];
 	u32 disk_sizes[ZIP_MAXIMUM_NUMBER_OF_DISKS];
-	int number_of_disks;	
+	int number_of_disks;
+	cdfh* central_dir;
+	u16 total_cd_entries;
+	char* zip_file_comment;
 };
 
 void zip_constructor (struct zip_Object** ptr_ptr) {
@@ -121,6 +143,7 @@ int zip_open_disk (struct zip_Object* obj, const char* fn) {
 		}
 	} while (cur_pos >= 0);
 
+	/* check that the EOCDR was found */
 	if (!eocdr_pos)
 		return ZIP_OPEN_NEED_ADDITIONAL_DISK;
 	else
@@ -129,6 +152,7 @@ int zip_open_disk (struct zip_Object* obj, const char* fn) {
 	printf ("eocdr_pos=%d\n", eocdr_pos);
 
 	/* EOCDR is found, now parse CD records */
+
 	return -999;	
 }
 
