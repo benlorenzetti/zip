@@ -11,6 +11,7 @@ typedef unsigned long u32;
 #define ZIP_SIGNATURE_FIELD_SIZE 4
 #define ZIP_LENGTH_FIELD_SIZE 2
 #define ZIP_EOCDR_SIGNATURE 0x06054b50
+#define ZIP_CDFH_FIXED_SIZE 46
 
 static u32 zip_get_field (FILE*, int); /* file stream, field size (bytes) */
 
@@ -151,7 +152,48 @@ int zip_open_disk (struct zip_Object* obj, const char* fn) {
 
 	printf ("eocdr_pos=%d\n", eocdr_pos);
 
-	/* EOCDR is found, now parse CD records */
+	/* EOCDR is found, parse it */
+	u32 signature;
+	u16 this_disk;
+	u16 start_disk;
+	u16 this_disk_entries;
+	u16 tot_entries;
+	u32 cd_size;
+	u32 cd_offset;
+	u16 fc_length;
+	
+	if (fseek (fp, eocdr_pos, SEEK_SET))
+		return ZIP_OPEN_FAILURE;
+
+	signature = zip_get_field (fp, ZIP_SIGNATURE_FIELD_SIZE);
+	this_disk = zip_get_field (fp, 2);
+	start_disk = zip_get_field (fp, 2);
+	this_disk_entries = zip_get_field (fp, 2);
+	tot_entries = zip_get_field (fp, 2);
+	cd_size = zip_get_field (fp, 4);
+	cd_offset = zip_get_field (fp, 4);
+	fc_length = zip_get_field (fp, 2);
+
+	obj->zip_file_comment = malloc (fc_length);
+	if (!obj->zip_file_comment)
+		return ZIP_OPEN_FAILURE;
+	if (fc_length != fread ((void*) obj->zip_file_comment, 1, fc_length, fp))
+		return ZIP_OPEN_FAILURE;
+	obj->zip_file_comment[fc_length] = 0;
+
+	/* Parse the Central Directory File Headers */
+	u32 disk, pos;
+	disk = start_disk;
+	pos = cd_offset;
+	for (u16 i=0; i<tot_entries; i++) {
+		printf ("reading entry %d, disk=%d, pos=%d\n", i, disk, pos);
+		if (disk >= obj->number_of_disks)
+			return ZIP_OPEN_FAILURE;
+		if (pos >= obj->disk_sizes[disk] - ZIP_CDFH_FIXED_SIZE)
+			return ZIP_OPEN_FAILURE;
+		
+		
+	}
 
 	return -999;	
 }
