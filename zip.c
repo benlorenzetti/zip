@@ -274,21 +274,6 @@ int zip_open_disk (struct zip_Object* obj, const char* fn) {
 
 		printf ("file_name=%s\n", temp->file_name);
 
-		/* if there is a data descriptor, parse over it */
-		signature = zip_get_field (obj->disks[disk], ZIP_SIGNATURE_FIELD_SIZE);
-		if (signature == 0x08074b50) {
-			if (fseek (obj->disks[disk], 16, SEEK_CUR))
-				return ZIP_OPEN_FAILURE;
-		}
-		else if (signature == temp->crc_32 && temp->crc_32 != 0x02014b50) {
-			if (fseek (obj->disks[disk], 12, SEEK_CUR))
-				return ZIP_OPEN_FAILURE;
-		}
-		else {
-			if (fseek (obj->disks[disk], (-1)*ZIP_SIGNATURE_FIELD_SIZE, SEEK_CUR))
-				return ZIP_OPEN_FAILURE;
-		}
-
 		/* if there is no more information on this disk, increment disks */
 		if (ftell (obj->disks[disk]) >= obj->disk_sizes[disk] - ZIP_CDFH_FIXED_SIZE)
 			disk++;
