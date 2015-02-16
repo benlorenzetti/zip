@@ -8,6 +8,6 @@ exe:	$(OBJS)
 zip.o:	zip.c
 	$(CC) $(CFLAGS) zip.c
 
-test.o:	zip.o
+test.o:	zip.o test.c
 	$(CC) $(CFLAGS) test.c
 

@@ -170,8 +170,6 @@ int zip_open_disk (struct zip_Object* obj, const char* fn) {
 	else
 		obj->state = ZIP_STATE_CENTRAL_DIRECTORY_COMPLETE;
 
-	printf ("eocdr_pos=%d\n", eocdr_pos);
-
 	/* EOCDR is found, parse it */
 	u32 signature;
 	u16 this_disk;
@@ -218,7 +216,6 @@ int zip_open_disk (struct zip_Object* obj, const char* fn) {
 
 		/* save the prior header for building a linked list */
 		prev_temp = temp;
-		printf ("reading entry %d, disk=%d", i, disk);
 
 		/* determine if there is enough information on current disk */
 		if (disk >= obj->number_of_disks)
@@ -226,12 +223,10 @@ int zip_open_disk (struct zip_Object* obj, const char* fn) {
 		if (ftell (obj->disks[disk]) >= obj->disk_sizes[disk] - ZIP_CDFH_FIXED_SIZE)
 			return ZIP_OPEN_FAILURE;
 
-		printf ("calling zip_get_field (signature)...");
 		/* if a CDFH Signature is found, allocate a new CDFH structure */
 		signature = zip_get_field (obj->disks[disk], ZIP_SIGNATURE_FIELD_SIZE);
 		if (signature != 0x02014b50)
 			return ZIP_OPEN_FAILURE;
-		printf ("signature valid.\n");
 		temp = malloc (sizeof (struct zip_central_directory_file_header));
 		if (!temp) {
 			printf ("memory allocation error.\n");
@@ -272,8 +267,6 @@ int zip_open_disk (struct zip_Object* obj, const char* fn) {
 			return ZIP_OPEN_FAILURE;
 		temp->file_comment[temp->fcl] = 0;
 
-		printf ("file_name=%s\n", temp->file_name);
-
 		/* if there is no more information on this disk, increment disks */
 		if (ftell (obj->disks[disk]) >= obj->disk_sizes[disk] - ZIP_CDFH_FIXED_SIZE)
 			disk++;
@@ -299,8 +292,21 @@ int zip_open_disk (struct zip_Object* obj, const char* fn) {
 	return ZIP_OPEN_SUCCESS;
 }
 
-char* zip_get_filename (struct zip_Object* obj, int n, char* dest) {
-	return dest;
+char* zip_get_filename (struct zip_Object* obj, int n, char* dest, int size) {
+
+	if (n >=  obj->total_cd_entries) {
+		return NULL;
+	}
+	else {
+		cdfh header_n;
+		header_n = obj->central_dir;
+		for (int i=0; i<n; i++)
+			header_n = header_n->next_cdfh;
+
+		strncpy (dest, header_n->file_name, size);
+		dest[size-1] = 0;		
+		return dest;
+	}
 }
 
 int zip_search_filename (struct zip_Object* obj, const char* fn) {
@@ -313,6 +319,19 @@ int zip_get_file_length (struct zip_Object* obj, int n) {
 
 int zip_get_file (struct zip_Object* obj, int n, u8* dest) {
 	return 0;
+}
+
+void zip_remove_file (struct zip_Object* obj, int n) {
+
+}
+
+void zip_append_file (
+	struct zip_Object* obj,
+	const unsigned char* raw,
+	int raw_size,
+	int comp_method
+) {
+
 }
 
 int zip_error_code (struct zip_Object* obj) {
