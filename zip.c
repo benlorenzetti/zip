@@ -63,12 +63,33 @@ void zip_constructor (struct zip_Object** ptr_ptr) {
 	/* initialize variables */
 	obj_ptr->state = ZIP_STATE_WITHOUT_FORM;
 	obj_ptr->number_of_disks = 0;
+	obj_ptr->central_dir = NULL;
+	obj_ptr->total_cd_entries = 0;
+	obj_ptr->zip_file_comment = NULL;
 }
 
 void zip_destructor (struct zip_Object** ptr_ptr) {
 
 	struct zip_Object* obj_ptr = *ptr_ptr;
 	
+	/* deallocate the central_dir linked list */
+	if (obj_ptr->central_dir) {
+		cdfh current, next;
+		current = *obj_ptr->central_dir;
+		while (current) {
+			next = current->next_cdfh;
+//			free (current->file_name);
+//			free (current->extra_field);
+//			free (current->file_comment);
+//			free (current);
+			current = next;
+		}
+
+	}
+
+	/* deallocate the zip file comment */
+//	free (obj_ptr->zip_file_comment);
+
 	/* close all open disks */
 	for (int i=0; i< obj_ptr->number_of_disks; i++) {
 		fclose (obj_ptr->disks[i]);
@@ -181,21 +202,117 @@ int zip_open_disk (struct zip_Object* obj, const char* fn) {
 		return ZIP_OPEN_FAILURE;
 	obj->zip_file_comment[fc_length] = 0;
 
+	/* Go to the start of CD Central Directory */
+	if (start_disk >= obj->number_of_disks)
+		return ZIP_OPEN_FAILURE;
+	if (cd_offset >= obj->disk_sizes[start_disk] - ZIP_CDFH_FIXED_SIZE)
+		return ZIP_OPEN_FAILURE;
+	if (fseek (obj->disks[start_disk], cd_offset, SEEK_SET))
+		return ZIP_OPEN_FAILURE;
+
 	/* Parse the Central Directory File Headers */
-	u32 disk, pos;
+	u32 disk;
+	cdfh temp, prev_temp;
 	disk = start_disk;
-	pos = cd_offset;
+	temp = NULL;
 	for (u16 i=0; i<tot_entries; i++) {
-		printf ("reading entry %d, disk=%d, pos=%d\n", i, disk, pos);
+
+		/* save the prior header for building a linked list */
+		prev_temp = temp;
+		printf ("reading entry %d, disk=%d", i, disk);
+
+		/* determine if there is enough information on current disk */
 		if (disk >= obj->number_of_disks)
 			return ZIP_OPEN_FAILURE;
-		if (pos >= obj->disk_sizes[disk] - ZIP_CDFH_FIXED_SIZE)
+		if (ftell (obj->disks[disk]) >= obj->disk_sizes[disk] - ZIP_CDFH_FIXED_SIZE)
 			return ZIP_OPEN_FAILURE;
+
+		printf ("calling zip_get_field (signature)...");
+		/* if a CDFH Signature is found, allocate a new CDFH structure */
+		signature = zip_get_field (obj->disks[disk], ZIP_SIGNATURE_FIELD_SIZE);
+		if (signature != 0x02014b50)
+			return ZIP_OPEN_FAILURE;
+		printf ("signature valid.\n");
+		temp = malloc (sizeof (struct zip_central_directory_file_header));
+		if (!temp) {
+			printf ("memory allocation error.\n");
+			exit (EXIT_FAILURE);
+		}
+
+		/* read the fields from disk into the CDFH structure */
+		u16 dummy;
+		dummy = zip_get_field (obj->disks[disk], 2);
+		temp->version = zip_get_field (obj->disks[disk], 2);
+		temp->bit_flag = zip_get_field (obj->disks[disk], 2);
+		temp->comp_method = zip_get_field (obj->disks[disk], 2);
+		dummy = zip_get_field (obj->disks[disk], 2);
+		dummy = zip_get_field (obj->disks[disk], 2);
+		temp->crc_32 = zip_get_field (obj->disks[disk], 4);
+		temp->comp_size = zip_get_field (obj->disks[disk], 4);
+		temp->uncomp_size = zip_get_field (obj->disks[disk], 4);
+		temp->fnl = zip_get_field (obj->disks[disk], 2);
+		temp->efl = zip_get_field (obj->disks[disk], 2);
+		temp->fcl = zip_get_field (obj->disks[disk], 2);
+		temp->disk = zip_get_field (obj->disks[disk], 2);
+		temp->int_attr = zip_get_field (obj->disks[disk], 2);
+		temp->ext_attr = zip_get_field (obj->disks[disk], 4);
+		temp->offset = zip_get_field (obj->disks[disk], 4);
+		if (!(temp->file_name = malloc (temp->fnl + 1)))
+			printf ("memory allocation error.\n"), exit (EXIT_FAILURE);
+		if (temp->fnl != fread (temp->file_name, 1, temp->fnl, obj->disks[disk]))
+			return ZIP_OPEN_FAILURE;
+		temp->file_name[temp->fnl] = 0;
+		if (!(temp->extra_field = malloc (temp->efl + 1)))
+			printf ("memory allocation error.\n"), exit (EXIT_FAILURE);
+		if (temp->efl != fread (temp->extra_field, 1, temp->efl, obj->disks[disk]))
+			return ZIP_OPEN_FAILURE;
+		temp->extra_field[temp->efl] = 0;
+		if (!(temp->file_comment = malloc (temp->fcl + 1)))
+			printf ("memory allocation error.\n"), exit (EXIT_FAILURE);
+		if (temp->fcl != fread (temp->file_comment, 1, temp->fcl, obj->disks[disk]))
+			return ZIP_OPEN_FAILURE;
+		temp->file_comment[temp->fcl] = 0;
+
+		printf ("file_name=%s\n", temp->file_name);
+
+		/* if there is a data descriptor, parse over it */
+		signature = zip_get_field (obj->disks[disk], ZIP_SIGNATURE_FIELD_SIZE);
+		if (signature == 0x08074b50) {
+			if (fseek (obj->disks[disk], 16, SEEK_CUR))
+				return ZIP_OPEN_FAILURE;
+		}
+		else if (signature == temp->crc_32 && temp->crc_32 != 0x02014b50) {
+			if (fseek (obj->disks[disk], 12, SEEK_CUR))
+				return ZIP_OPEN_FAILURE;
+		}
+		else {
+			if (fseek (obj->disks[disk], (-1)*ZIP_SIGNATURE_FIELD_SIZE, SEEK_CUR))
+				return ZIP_OPEN_FAILURE;
+		}
+
+		/* if there is no more information on this disk, increment disks */
+		if (ftell (obj->disks[disk]) >= obj->disk_sizes[disk] - ZIP_CDFH_FIXED_SIZE)
+			disk++;
+
+
+		/* append the temporary CDFH to the central_dir linked list */
+		if (!obj->central_dir) {
+			temp->prev_cdfh = NULL;
+			obj->central_dir = temp;
+			temp->next_cdfh = NULL;
+			obj->total_cd_entries++;
+		}
+		else {
+			temp->prev_cdfh = prev_temp;
+			prev_temp->next_cdfh = temp;
+			temp->next_cdfh = NULL;
+			obj->total_cd_entries++;
+		}
 		
-		
+		/* continue to the next Central Directory File Header */
 	}
 
-	return -999;	
+	return ZIP_OPEN_SUCCESS;
 }
 
 char* zip_get_filename (struct zip_Object* obj, int n, char* dest) {
