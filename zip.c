@@ -47,7 +47,7 @@ struct zip_Object {
 	FILE* disks[ZIP_MAXIMUM_NUMBER_OF_DISKS];
 	u32 disk_sizes[ZIP_MAXIMUM_NUMBER_OF_DISKS];
 	int number_of_disks;
-	cdfh* central_dir;
+	cdfh central_dir;
 	u16 total_cd_entries;
 	char* zip_file_comment;
 };
@@ -75,20 +75,19 @@ void zip_destructor (struct zip_Object** ptr_ptr) {
 	/* deallocate the central_dir linked list */
 	if (obj_ptr->central_dir) {
 		cdfh current, next;
-		current = *obj_ptr->central_dir;
+		current = obj_ptr->central_dir;
 		while (current) {
 			next = current->next_cdfh;
-//			free (current->file_name);
-//			free (current->extra_field);
-//			free (current->file_comment);
-//			free (current);
+			free ((current->file_name));
+			free ((current->extra_field));
+			free ((current->file_comment));
+			free (current);
 			current = next;
 		}
-
 	}
 
 	/* deallocate the zip file comment */
-//	free (obj_ptr->zip_file_comment);
+	free (obj_ptr->zip_file_comment);
 
 	/* close all open disks */
 	for (int i=0; i< obj_ptr->number_of_disks; i++) {
