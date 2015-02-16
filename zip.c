@@ -14,13 +14,19 @@ typedef unsigned long u32;
 
 static u32 zip_get_field (FILE*, int); /* file stream, field size (bytes) */
 
-#define ZIP_STATE_CONSTRUCTED 0
-#define ZIP_STATE_ALL_DISKS_PARSED 1
+/* Below are the fundamental state of a zip object. They can occur only
+   in increasing order, but some state may be skipped. For example calling
+   zip_constructor() followed by zip_append_new_file() causes a skip from
+   ZIP_STATE_WITHOUT_FORM to ZIP_STATE_APPEND_FILES.
+*/
+#define ZIP_STATE_WITHOUT_FORM 0
+#define ZIP_STATE_CENTRAL_DIRECTORY_COMPLETE 1
 
 struct zip_Object {
 	int state;
-	FILE* disk_array[ZIP_MAXIMUM_NUMBER_OF_DISKS];
-	int disk_array_size;	
+	FILE* disks[ZIP_MAXIMUM_NUMBER_OF_DISKS];
+	u32 disk_sizes[ZIP_MAXIMUM_NUMBER_OF_DISKS];
+	int number_of_disks;	
 };
 
 void zip_constructor (struct zip_Object** ptr_ptr) {
@@ -32,8 +38,8 @@ void zip_constructor (struct zip_Object** ptr_ptr) {
 		printf ("memory allocation failure\n"), exit (EXIT_FAILURE);
 
 	/* initialize variables */
-	obj_ptr->state = ZIP_STATE_CONSTRUCTED;
-	obj_ptr->disk_array_size = 0;
+	obj_ptr->state = ZIP_STATE_WITHOUT_FORM;
+	obj_ptr->number_of_disks = 0;
 }
 
 void zip_destructor (struct zip_Object** ptr_ptr) {
@@ -41,8 +47,8 @@ void zip_destructor (struct zip_Object** ptr_ptr) {
 	struct zip_Object* obj_ptr = *ptr_ptr;
 	
 	/* close all open disks */
-	for (int i=0; i< obj_ptr->disk_array_size; i++) {
-		fclose (obj_ptr->disk_array[i]);
+	for (int i=0; i< obj_ptr->number_of_disks; i++) {
+		fclose (obj_ptr->disks[i]);
 	}
 	
 	/* free the object from memory */
@@ -51,22 +57,32 @@ void zip_destructor (struct zip_Object** ptr_ptr) {
 
 /* return ZIP_OPEN_SUCCESS, ZIP_OPEN_NEED_ADDITIONAL_DISK, or ZIP_OPEN_FAILURE */
 int zip_open_disk (struct zip_Object* obj, const char* fn) {
+
+	/* cannot load any more disks after CD found */
+	if (obj->state != ZIP_STATE_WITHOUT_FORM) {
+		printf ("zip_open_disk() error: object already has Central Directory\n");
+		printf ("(you must open disks in order)\n");
+		exit (EXIT_FAILURE);
+	}	
 	
-	/* open file */
+	/* open file and determine its size */
 	FILE* fp;
-	char mode[] = "r+b";
+	char mode[] = "rb";
 	fp = fopen (fn, mode);
-	if (!fp)
+	if (!fp) {
 		return ZIP_OPEN_FAILURE;
-	else
-		obj->disk_array[obj->disk_array_size++] = fp;
+	}
+	else if (fseek (fp, 0, SEEK_END)) {
+		return ZIP_OPEN_FAILURE;
+	}
+	else {
+		obj->disks[obj->number_of_disks] = fp;
+		obj->disk_sizes[obj->number_of_disks] = ftell (fp);
+		obj->number_of_disks++;
+	}
 
 	/* attempt to find the End of Central Directory Record */
-	u32 file_size, eocdr_pos, cd_pos, cur_pos, cur_val;
-
-	if (fseek (fp, 0, SEEK_END))
-		return ZIP_OPEN_FAILURE;
-	file_size = ftell (fp);
+	u32 eocdr_pos, cur_pos, cur_val;
 
 	if (fseek (fp, (-1)*ZIP_EOCDR_FIXED_PORTION_SIZE, SEEK_END))
 		return ZIP_OPEN_FAILURE;
@@ -90,7 +106,7 @@ int zip_open_disk (struct zip_Object* obj, const char* fn) {
 			fcl = zip_get_field (fp, ZIP_LENGTH_FIELD_SIZE);
 			cur_pos += ZIP_LENGTH_FIELD_SIZE;
 
-			if (file_size == cur_pos) {
+			if (obj->disk_sizes[obj->number_of_disks-1] == cur_pos) {
 				eocdr_pos = pos_pos;
 				break;
 			}
@@ -108,7 +124,9 @@ int zip_open_disk (struct zip_Object* obj, const char* fn) {
 	if (!eocdr_pos)
 		return ZIP_OPEN_NEED_ADDITIONAL_DISK;
 	else
-		printf ("EOCDR found at %d\n", eocdr_pos);
+		obj->state = ZIP_STATE_CENTRAL_DIRECTORY_COMPLETE;
+
+	printf ("eocdr_pos=%d\n", eocdr_pos);
 
 	/* EOCDR is found, now parse CD records */
 	return -999;	
