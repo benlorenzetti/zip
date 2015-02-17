@@ -1,6 +1,6 @@
 OBJS = zip.o comp.o test.o
-CC = c99
-CFLAGS = -c
+CC = gcc
+CFLAGS = -std=c99 -c
 
 exe:	$(OBJS)
 	$(CC) $(OBJS) -o exe

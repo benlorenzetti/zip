@@ -5,6 +5,6 @@
  *****************************************************************************/
 #include <stdio.h>
 
-int comp_inflate (unsigned char*, int, FILE*, int);
+int comp_inflate (unsigned char*, int, const unsigned char*, int);
 
 #endif
