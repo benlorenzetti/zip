@@ -18,5 +18,12 @@ int main () {
 
 	printf ("size of content.xml: %d\n", (int) zip_get_file_length (zip1, 3));
 
+	unsigned char* uncompressed = NULL;
+	unsigned long size;
+	size = zip_get_file (zip1, 3, &uncompressed);
+	printf ("zip_get_file() returned size=%d\n", size);
+	if (uncompressed)
+		free (uncompressed);	
+
 	zip_destructor (&zip1);
 }

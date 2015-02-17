@@ -1,6 +1,7 @@
 #include "zip.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -12,6 +13,7 @@ typedef unsigned long u32;
 #define ZIP_LENGTH_FIELD_SIZE 2
 #define ZIP_EOCDR_SIGNATURE 0x06054b50
 #define ZIP_CDFH_FIXED_SIZE 46
+#define ZIP_LFH_FIXED_SIZE
 
 static u32 zip_get_field (FILE*, int); /* file stream, field size (bytes) */
 
@@ -337,7 +339,77 @@ unsigned long zip_get_file_length (struct zip_Object* obj, int n) {
 }
 
 u32 zip_get_file (struct zip_Object* obj, int n, u8** dest_ptr) {
-	return 0;
+	
+	if (*dest_ptr) {
+		fprintf (stderr, "ERROR: zip_get_file() allocates memory for the destination; ");
+		fprintf (stderr, "the destination parameter MUST be NULL.\n");
+		exit (EXIT_FAILURE);	
+	}
+	
+	/* check that n is in bounds and state is Ok */
+	if (obj->state != ZIP_STATE_CENTRAL_DIRECTORY_COMPLETE) {
+		printf ("zip_get_file() error: central directory is not complete;");
+		printf (" it cannot be parsed.\n");
+		exit (EXIT_FAILURE);
+	}
+	if (n >= obj->total_cd_entries)
+		return 0;
+
+	/* make local copies of relevent variables */
+	cdfh cdfh_n;
+	FILE* fstream;
+	u32 uncomp_size, comp_size, offset;
+	u16 disk, comp_method, fnl, efl;
+
+	cdfh_n = obj->central_dir;
+	for (int i=0; i<n; i++)
+		cdfh_n = cdfh_n->next_cdfh;
+	fstream = obj->disks[cdfh_n->disk];
+	uncomp_size = cdfh_n->uncomp_size;
+	comp_size = cdfh_n->comp_size;
+	offset = cdfh_n->offset;
+	disk = cdfh_n->disk;
+	comp_method = cdfh_n->comp_method;
+	printf ("uncomp_size=%d, comp_size=%d, offset=%d, comp_method=%d\n", uncomp_size, comp_size, offset, comp_method);
+	if (!uncomp_size || !comp_size)
+		return 0;
+
+	/* parse the local file header to check for consistency */
+	fnl = cdfh_n->fnl;
+	efl = cdfh_n->efl;	
+
+	/* position the file pointer to start of compressed data */
+	if (disk >= obj->number_of_disks)
+		return 0;
+	if (obj->disk_sizes[disk] <= (offset + ZIP_LFH_FIXED_SIZE + fnl + efl)) {
+		printf ("failing here.\n");
+		return 0;
+	}
+	if (fseek (fstream, (offset + ZIP_LFH_FIXED_SIZE + fnl + efl), SEEK_SET))
+		return 0;
+
+	/* allocate destination buffer */
+	*dest_ptr = malloc (uncomp_size);
+	if (!(*dest_ptr)) {
+		printf ("ERROR: memory allocation failed in zip_get_file().\n");
+		exit (EXIT_FAILURE);
+	}
+
+	/* decompress the data */
+	if (comp_method == ZIP_APPEND_NO_COMPRESSION) {
+
+	}
+	else if (comp_method == ZIP_APPEND_DEFLATE_COMPRESSION) {
+
+	}
+	else {
+		free (*dest_ptr);
+		*dest_ptr = NULL;
+		return 0;
+	}
+	
+
+	return uncomp_size;
 }
 
 void zip_remove_file (struct zip_Object* obj, int n) {
