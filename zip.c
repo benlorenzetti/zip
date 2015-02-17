@@ -397,10 +397,18 @@ u32 zip_get_file (struct zip_Object* obj, int n, u8** dest_ptr) {
 
 	/* decompress the data */
 	if (comp_method == ZIP_APPEND_NO_COMPRESSION) {
-
+		if (uncomp_size != fread (*dest_ptr, 1, uncomp_size, fstream)) {
+			free (*dest_ptr);
+			*dest_ptr = NULL;
+			return 0;
+		}
 	}
 	else if (comp_method == ZIP_APPEND_DEFLATE_COMPRESSION) {
-
+		if (uncomp_size != comp_inflate (*dest_ptr, uncomp_size, fstream, comp_size)) {
+			free (*dest_ptr);
+			*dest_ptr = NULL;
+			return 0;
+		}
 	}
 	else {
 		free (*dest_ptr);
