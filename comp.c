@@ -13,7 +13,9 @@ struct key_value_pair {
 	u16 value;
 };
 
-u8 get_bits (const u8*, u32*, u8*, u8);
+int get_data_element (const u8*, u32*, int*, int);
+int get_bit (const u8*, u32*, int*);
+/* src, byte, bit within byte, # of bits to extract */
 void initialize_pair_array (pair*, int);
 int pair_cmp (const void*, const void*);
 int key_cmp (const void*, const void*);
@@ -40,7 +42,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 	int block_state, last_block_bool;
 	u32 index, size; /* index into source and size written to dest */
 	u16 length_value;
-	u8 bit;
+	int bit;
 	pair ll_tree[LITERAL_LENGTH_TREE_SIZE];
 	pair d_tree[DISTANCE_TREE_SIZE];
 	pair cl_tree[CODE_LENGTH_TREE_SIZE];
@@ -59,9 +61,9 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 		if (block_state == NEW_BLOCK) {
 			/* Read the first 3 bits to determine the compression coding */
 			printf ("NEW_BLOCK, src[index]=%d, ", src[index]);
-			last_block_bool = get_bits (src, &index, &bit, 1);
+			last_block_bool = get_bit (src, &index, &bit);
 			u8 btype;
-			btype = get_bits (src, &index, &bit, 2);
+			btype = get_data_element (src, &index, &bit, 2);
 			printf ("last_block_bool=%d, btype=%d\n", last_block_bool, btype);
 			/* go to next state based on compression type */
 			if (btype == 0)
@@ -76,7 +78,9 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 			}
 		}
 	
-		else if (block_state == LOAD_DEFAULT_CODE_LENGTHS) {
+		else if (block_state == LOAD_DEFAULT_CODE_LENGTHS)
+		{
+			printf ("LOAD_DEFAULT_CODE_LENGTHS\n");
 			/* reset the code trees with 0 codes */
 			initialize_pair_array (ll_tree, LITERAL_LENGTH_TREE_SIZE);
 			initialize_pair_array (d_tree, DISTANCE_TREE_SIZE);
@@ -99,6 +103,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 
 		else if (block_state == BUILD_CODE_TREES)
 		{
+			printf ("BUILD_CODE_TREES\n");
 			/* sort the code trees by code length, then literal value */
 			qsort (ll_tree, LITERAL_LENGTH_TREE_SIZE, sizeof (ll_tree[0]), pair_cmp);
 			qsort (d_tree, DISTANCE_TREE_SIZE, sizeof (d_tree[0]), pair_cmp);
@@ -125,7 +130,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 			prev_length_bit = 1;
 			for (int i=0; i<DISTANCE_TREE_SIZE; i++) {
 				if (d_tree[i].key > prev_length_bit) {
-					new_code *= (ll_tree[i].key / prev_length_bit);
+					new_code *= (d_tree[i].key / prev_length_bit);
 					prev_length_bit = d_tree[i].key;
 				}
 				if (d_tree[i].key <= 1)
@@ -147,6 +152,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 
 		else if (block_state == DECODE_DATA)
 		{
+			printf ("DECODE_DATA...");
 			pair* match;
 			pair code;
 
@@ -155,7 +161,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 			code.key = 1; /* 1 is the length indicator bit */
 			while (!match && code.key < ULONG_MAX) {
 				code.key <<= 1;
-				code.key |= get_bits (src, &index, &bit, 1);
+				code.key |= get_bit (src, &index, &bit);
 				match = bsearch ((void*) &code, (void*) ll_tree, LITERAL_LENGTH_TREE_SIZE, sizeof (ll_tree[0]), key_cmp);	
 			}
 
@@ -165,7 +171,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 
 			/* take action and choose next state base on the literal/length value */
 			if (match->value < 256) {
-				printf ("%c", (char) match->value);
+				printf ("%c\n", (char) match->value);
 				dest[size++] = match->value;
 				block_state = DECODE_DATA;
 			}
@@ -187,9 +193,9 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 		else if (block_state == READ_TREE_METADATA)
 		{
 			/* Read the remainder of the block header for dynamic coding */
-			hlit = 257 + get_bits (src, &index, &bit, 5);
-			hdist = 1 + get_bits (src, &index, &bit, 5);
-			hclen = 4 + get_bits (src, &index, &bit, 4);
+			hlit = 257 + get_data_element (src, &index, &bit, 5);
+			hdist = 1 + get_data_element (src, &index, &bit, 5);
+			hclen = 4 + get_data_element (src, &index, &bit, 4);
 			printf ("READ_TREE_METADATA, hlit=%d, hdist=%d, hclen=%d\n", hlit, hdist, hclen);
 
 			block_state = READ_CODE_LENGTH_CODE_LENGTHS;
@@ -209,7 +215,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 			/* read code lengths; each is 3 bits */
 			for (int i=0; i<hclen; i++) {
 				int code_length;
-				code_length = get_bits (src, &index, &bit, 3);
+				code_length = get_data_element (src, &index, &bit, 3);
 				cl_tree[i].key = 1 << code_length;
 			}
 
@@ -219,6 +225,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 
 		else if (block_state == BUILD_CODE_LENGTH_CODE_TREE)
 		{
+			printf ("BUILD_CODE_LENGTH_CODE_TREE\n");
 			/* sort the code trees by code length, then literal value */
 			qsort (cl_tree, CODE_LENGTH_TREE_SIZE, sizeof (cl_tree[0]), pair_cmp);
 
@@ -261,15 +268,13 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 				code.key = 1; /* 1 is the length indicator bit */
 				while (!match && code.key < ULONG_MAX) {
 					code.key <<= 1;
-					code.key |= get_bits (src, &index, &bit, 1);
+					code.key |= get_bit (src, &index, &bit);
 					match = bsearch ((void*) &code, (void*) cl_tree, CODE_LENGTH_TREE_SIZE, sizeof (cl_tree[0]), key_cmp);	
 				}
 	
 				/* if no match was found, then the data must be bad */
 				if (!match)
 					return size;
-				else
-					printf ("i=%d, match->key=%d, match->value=%d\n", i, match->key, match->value);
 	
 				/* take action and choose next state base on the literal/length value */
 				if (match->value < 16) {
@@ -280,7 +285,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 				}
 				else if (match->value == 16) {
 					int repeat_length;
-					repeat_length = 3 + get_bits (src, &index, &bit, 2);
+					repeat_length = 3 + get_bit (src, &index, &bit);
 					for (int j=0; j<repeat_length; j++) {
 						ll_tree[i].key = ll_tree[i-1].key;
 						i++;
@@ -288,7 +293,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 				}
 				else if (match->value == 17) {
 					int repeat_length;
-					repeat_length = 3 + get_bits (src, &index, &bit, 3);
+					repeat_length = 3 + get_data_element (src, &index, &bit, 3);
 					for (int j=0; j<repeat_length; j++) {
 						ll_tree[i].key = ll_tree[i-1].key;
 						i++;
@@ -296,7 +301,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 				}
 				else {
 					int repeat_length;
-					repeat_length = 11 + get_bits (src, &index, &bit, 3);
+					repeat_length = 11 + get_data_element (src, &index, &bit, 3);
 					for (int j=0; j<repeat_length; j++) {
 						ll_tree[i].key = ll_tree[i-1].key;
 						i++;
@@ -306,10 +311,6 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 				/* continue to next literal/length code */
 			}	
 			
-			printf ("Literal/Length Code-Value Pairs:\n");
-			for (int i=0; i<LITERAL_LENGTH_TREE_SIZE; i++)
-				printf ("\t%d\t%d\n", ll_tree[i].key, ll_tree[i].value);
-
 			/* go to next state */
 			block_state = READ_DISTANCE_CODE_LENGTHS;
 		}
@@ -328,7 +329,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 				code.key = 1; /* 1 is the length indicator bit */
 				while (!match && code.key < ULONG_MAX) {
 					code.key <<= 1;
-					code.key |= get_bits (src, &index, &bit, 1);
+					code.key |= get_bit (src, &index, &bit);
 					match = bsearch ((void*) &code, (void*) cl_tree, CODE_LENGTH_TREE_SIZE, sizeof (cl_tree[0]), key_cmp);	
 				}
 	
@@ -345,7 +346,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 				}
 				else if (match->value == 16) {
 					int repeat_length;
-					repeat_length = 3 + get_bits (src, &index, &bit, 2);
+					repeat_length = 3 + get_data_element (src, &index, &bit, 2);
 					for (int j=0; j<repeat_length; j++) {
 						d_tree[i].key = d_tree[i-1].key;
 						i++;
@@ -353,7 +354,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 				}
 				else if (match->value == 17) {
 					int repeat_length;
-					repeat_length = 3 + get_bits (src, &index, &bit, 3);
+					repeat_length = 3 + get_data_element (src, &index, &bit, 3);
 					for (int j=0; j<repeat_length; j++) {
 						d_tree[i].key = d_tree[i-1].key;
 						i++;
@@ -361,7 +362,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 				}
 				else {
 					int repeat_length;
-					repeat_length = 11 + get_bits (src, &index, &bit, 3);
+					repeat_length = 11 + get_data_element (src, &index, &bit, 3);
 					for (int j=0; j<repeat_length; j++) {
 						d_tree[i].key = d_tree[i-1].key;
 						i++;
@@ -384,16 +385,31 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 	return size;
 } 
 
-u8 get_bits (const u8* data_stream, u32* current_byte, u8* current_bit, u8 number_of_bits) {
-	u8 value, bit;
-	value = 0;
+int get_data_element (const u8* data_stream, u32* current_byte, int* current_bit, int number_of_bits) {
+
+	int bit, byte, data_element;
+	data_element = 0;
 	for (int i=0; i<number_of_bits; i++) {
-		bit = (data_stream[*current_byte] & (1 << (*current_bit & 8))) >> (*current_bit & 8);
-		value |= bit << i;
+		byte = data_stream[*current_byte];
+		bit = (byte & (1 << (*current_bit))) >> (*current_bit);
+		data_element += bit << i;
 		(*current_bit)++;
-		(*current_byte) += !((*current_bit) & 8) ? 1 : 0;
+		(*current_byte) += (*current_bit) / 8;
+		(*current_bit) %= 8;
 	}
-	return value;
+	return data_element;
+}
+
+int get_bit (const u8* data_stream, u32* current_byte, int* current_bit) {
+	
+	u8 bit, byte;
+	byte = data_stream[*current_byte];
+	bit = (byte & (1 << (*current_bit))) >> (*current_bit);
+	printf ("byte=%d, (1 << (*current_bit))=%d, bit=%d\n", byte, (1 << (*current_bit)), bit);
+	(*current_bit)++;
+	(*current_byte) += (*current_bit) / 8;
+	(*current_bit) %= 8;
+	return bit;
 }
 
 void initialize_pair_array (pair* tree, int size) {
@@ -405,51 +421,35 @@ void initialize_pair_array (pair* tree, int size) {
 
 int pair_cmp (const void* p1, const void* p2)
 {
-	/* make local copies of the pairs */
-	u32 key1, key2;
-	u16 val1, val2;
-	key1 = ((pair*) p1)->key;
-	key2 = ((pair*) p2)->key;
-	val1 = ((pair*) p1)->value;
-	val2 = ((pair*) p2)->value;
-
-	/* keys with no length are not used--sort them to the back of arrays */
-	if (key1 == 1 || key1 == 0)
-		return 1;
-	if (key2 == 1 || key2 == 0)
-		return -1;
-
-	/* find the first key-length indicator bit */
-	while (key1 > 0 && key2 > 0) {
-		key1 >>= 1;
-		key2 >>= 1;
-	}
-
-	/* compare base on key length, then value numerically */
-	if (key1 > key2)
-		return 1;
-	else if (key1 < key2)
-		return -1;
-	else if (val1 > val2)
-		return 1;
-	else if (val1 < val2)
-		return -1;
+	/* compare the keys */
+	int keys_cmp;
+	keys_cmp = key_cmp (p1, p2);
+	if (keys_cmp)
+		return keys_cmp;
 	else
-		return 0;
+	{	
+		/* keys match, so compare values ASCII-alphabetically */
+		u16 val1, val2;
+		val1 = ((pair*) p1)->value;
+		val2 = ((pair*) p2)->value;
+		if (val1 > val2)
+			return 1;
+		else if (val1 < val2)
+			return -1;
+		else
+			return 0;
+	}
 }
 
 int key_cmp (const void* p1, const void* p2)
 {
+	/* make local copies of the keys */
 	u32 key1, key2;
 	key1 = ((pair*) p1)->key;
 	key2 = ((pair*) p2)->key;
-	if (key1 <= 1 && key1 > key2)
-		return 1;
-	else if (key1 <= 1)
-		return -1;
-	else if (key2 <= 1)
-		return -1;
-	else if (key1 < key2)
+	
+	/* compare keys */
+	if (key1 < key2)
 		return -1;
 	else if (key1 > key2)
 		return 1;
