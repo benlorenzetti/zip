@@ -58,13 +58,14 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 		!(last_block_bool && (NEW_BLOCK == block_state))) {
 		/* (src and dest bounds check)       
 		 * && (not end of last block)	*/
+
 		if (block_state == NEW_BLOCK) {
 			/* Read the first 3 bits to determine the compression coding */
-			printf ("NEW_BLOCK, src[index]=%d, ", src[index]);
+			printf ("NEW_BLOCK, src[index]=%d\n", src[index]);
 			last_block_bool = get_bit (src, &index, &bit);
 			u8 btype;
 			btype = get_data_element (src, &index, &bit, 2);
-			printf ("last_block_bool=%d, btype=%d\n", last_block_bool, btype);
+			printf ("NEW_BLOCK, last_block_bool=%d, btype=%d\n", last_block_bool, btype);
 			/* go to next state based on compression type */
 			if (btype == 0)
 				block_state = GET_BLOCK_LENGTH;
@@ -76,6 +77,22 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 				fprintf (stderr, "Error: deflated file has bad BTYPE.\n");
 				return -1;
 			}
+		}
+
+		if (block_state == GET_BLOCK_LENGTH)
+		{
+			u16 len, nlen;
+			/* skip to the next byte boundry and read LEN of the block */
+			while (bit % 8) {
+				bit++;
+				index += bit / 8;
+				bit %= 8;
+			}
+			len = get_data_element (src, &index, &bit, 16);
+			nlen = get_data_element (src, &index, &bit, 16);
+			printf ("GET_BLOCK_LENGTH, len=%d, ~nlen=%d\n", len, ~nlen);
+			break;
+			
 		}
 	
 		else if (block_state == LOAD_DEFAULT_CODE_LENGTHS)
@@ -392,7 +409,8 @@ int get_data_element (const u8* data_stream, u32* current_byte, int* current_bit
 	for (int i=0; i<number_of_bits; i++) {
 		byte = data_stream[*current_byte];
 		bit = (byte & (1 << (*current_bit))) >> (*current_bit);
-		data_element += bit << i;
+		data_element += bit << (15-i);
+		printf ("*current_byte=%d, *current_bit=%d, byte=%d, bit=%d, data_element=%d\n", *current_byte, *current_bit, byte, bit, data_element);
 		(*current_bit)++;
 		(*current_byte) += (*current_bit) / 8;
 		(*current_bit) %= 8;
@@ -405,7 +423,6 @@ int get_bit (const u8* data_stream, u32* current_byte, int* current_bit) {
 	u8 bit, byte;
 	byte = data_stream[*current_byte];
 	bit = (byte & (1 << (*current_bit))) >> (*current_bit);
-	printf ("byte=%d, (1 << (*current_bit))=%d, bit=%d\n", byte, (1 << (*current_bit)), bit);
 	(*current_bit)++;
 	(*current_byte) += (*current_bit) / 8;
 	(*current_bit) %= 8;

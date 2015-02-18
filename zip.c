@@ -397,12 +397,25 @@ u32 zip_get_file (struct zip_Object* obj, int n, u8** dest_ptr) {
 	if (bit_flag & ZIP_DATA_DESCRIPTOR_FLAG) {
 		/* if set, the crc_32, comp_size, and uncomp_size are set to zero
 		and the correct values are placed in a data descriptor after the data */
+		u32 dd_offset, first_field;
+		dd_offset = cdfh_n->offset + ZIP_LFH_FIXED_SIZE + fnl + efl + cdfh_n->comp_size;
+		if (fseek (fstream, dd_offset, SEEK_SET))
+			return 0;
+		first_field = zip_get_field (fstream, 4);
+		if (first_field == 0x08074b50) {
+			crc_32 = zip_get_field (fstream, 4);
+			comp_size = zip_get_field (fstream, 4);
+			uncomp_size = zip_get_field (fstream, 4);
+		}
+		else {
+			crc_32 = first_field;
+			comp_size = zip_get_field (fstream, 4);
+			uncomp_size = zip_get_field (fstream, 4);
+		}
 	}
-	else {
-		inconsistent |= (crc_32 != cdfh_n->crc_32);
-		inconsistent |= (comp_size != cdfh_n->comp_size);
-		inconsistent |= (uncomp_size != cdfh_n->uncomp_size);
-	}
+	inconsistent |= (crc_32 != cdfh_n->crc_32);
+	inconsistent |= (comp_size != cdfh_n->comp_size);
+	inconsistent |= (uncomp_size != cdfh_n->uncomp_size);
 	if (inconsistent) {
 		fprintf (stderr, "Central Directory and Local File Header are inconsistent.\n");
 		return 0;
@@ -411,7 +424,7 @@ u32 zip_get_file (struct zip_Object* obj, int n, u8** dest_ptr) {
 	/* position the file pointer to start of compressed data */
 	if (obj->disk_sizes[cdfh_n->disk] <= ftell (fstream) + fnl + efl)
 		return 0;
-	if (fseek (fstream, fnl + efl, SEEK_CUR))
+	if (fseek (fstream, (cdfh_n->offset + ZIP_LFH_FIXED_SIZE + fnl + efl), SEEK_SET))
 		return 0;
 
 	/* allocate destination buffer */
@@ -423,6 +436,7 @@ u32 zip_get_file (struct zip_Object* obj, int n, u8** dest_ptr) {
 
 	/* decompress the data */
 	if (comp_method == ZIP_APPEND_NO_COMPRESSION) {
+		printf ("comp_method==ZIP_APPEND_NO_COMPRESSION\n");
 		if (uncomp_size != fread (*dest_ptr, 1, uncomp_size, fstream)) {
 			free (*dest_ptr);
 			*dest_ptr = NULL;
@@ -430,6 +444,7 @@ u32 zip_get_file (struct zip_Object* obj, int n, u8** dest_ptr) {
 		}
 	}
 	else if (comp_method == ZIP_APPEND_DEFLATE_COMPRESSION) {
+		printf ("comp_method==ZIP_APPEND_DEFLATE_COMPRESSION, calling comp_inflate()\n");
 		if (uncomp_size != comp_inflate (*dest_ptr, uncomp_size, fstream, comp_size)) {
 			free (*dest_ptr);
 			*dest_ptr = NULL;
