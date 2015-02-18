@@ -13,7 +13,8 @@ typedef unsigned long u32;
 #define ZIP_LENGTH_FIELD_SIZE 2
 #define ZIP_EOCDR_SIGNATURE 0x06054b50
 #define ZIP_CDFH_FIXED_SIZE 46
-#define ZIP_LFH_FIXED_SIZE
+#define ZIP_LFH_FIXED_SIZE 30
+#define ZIP_DATA_DESCRIPTOR_FLAG 8
 
 static u32 zip_get_field (FILE*, int); /* file stream, field size (bytes) */
 
@@ -355,37 +356,62 @@ u32 zip_get_file (struct zip_Object* obj, int n, u8** dest_ptr) {
 	if (n >= obj->total_cd_entries)
 		return 0;
 
-	/* make local copies of relevent variables */
+	/* make local copy of the central directory file record and position the file stream */
 	cdfh cdfh_n;
 	FILE* fstream;
-	u32 uncomp_size, comp_size, offset;
-	u16 disk, comp_method, fnl, efl;
 
 	cdfh_n = obj->central_dir;
 	for (int i=0; i<n; i++)
 		cdfh_n = cdfh_n->next_cdfh;
 	fstream = obj->disks[cdfh_n->disk];
-	uncomp_size = cdfh_n->uncomp_size;
-	comp_size = cdfh_n->comp_size;
-	offset = cdfh_n->offset;
-	disk = cdfh_n->disk;
-	comp_method = cdfh_n->comp_method;
-	printf ("uncomp_size=%d, comp_size=%d, offset=%d, comp_method=%d\n", uncomp_size, comp_size, offset, comp_method);
-	if (!uncomp_size || !comp_size)
+	if ((cdfh_n->disk) >= (obj->number_of_disks))
+		return 0;
+	if ((obj->disk_sizes[cdfh_n->disk]) <= (cdfh_n->offset + ZIP_LFH_FIXED_SIZE))
+		return 0;
+	if (fseek (fstream, cdfh_n->offset, SEEK_SET))
 		return 0;
 
-	/* parse the local file header to check for consistency */
-	fnl = cdfh_n->fnl;
-	efl = cdfh_n->efl;	
-
-	/* position the file pointer to start of compressed data */
-	if (disk >= obj->number_of_disks)
+	/* parse the local file header */
+	u16 version, bit_flag, comp_method, fnl, efl;
+	u32 signature, crc_32, comp_size, uncomp_size;
+	
+	signature = zip_get_field (fstream, 4);
+	version = zip_get_field (fstream, 2);
+	bit_flag = zip_get_field (fstream, 2);
+	comp_method = zip_get_field (fstream, 2);
+	if (fseek (fstream, 4, SEEK_CUR))
 		return 0;
-	if (obj->disk_sizes[disk] <= (offset + ZIP_LFH_FIXED_SIZE + fnl + efl)) {
-		printf ("failing here.\n");
+	crc_32 = zip_get_field (fstream, 4);
+	comp_size = zip_get_field (fstream, 4);
+	uncomp_size = zip_get_field (fstream, 4);
+	fnl = zip_get_field (fstream, 2);
+	efl = zip_get_field (fstream, 2);
+
+	/* check for consistency between central dir and local file header */
+	int inconsistent;
+
+	inconsistent = 0;
+	inconsistent |= (signature != 0x04034b50);
+	version = ((version > cdfh_n->version) ? version : cdfh_n->version);
+	inconsistent |= (comp_method != cdfh_n->comp_method);
+	if (bit_flag & ZIP_DATA_DESCRIPTOR_FLAG) {
+		/* if set, the crc_32, comp_size, and uncomp_size are set to zero
+		and the correct values are placed in a data descriptor after the data */
+	}
+	else {
+		inconsistent |= (crc_32 != cdfh_n->crc_32);
+		inconsistent |= (comp_size != cdfh_n->comp_size);
+		inconsistent |= (uncomp_size != cdfh_n->uncomp_size);
+	}
+	if (inconsistent) {
+		fprintf (stderr, "Central Directory and Local File Header are inconsistent.\n");
 		return 0;
 	}
-	if (fseek (fstream, (offset + ZIP_LFH_FIXED_SIZE + fnl + efl), SEEK_SET))
+
+	/* position the file pointer to start of compressed data */
+	if (obj->disk_sizes[cdfh_n->disk] <= ftell (fstream) + fnl + efl)
+		return 0;
+	if (fseek (fstream, fnl + efl, SEEK_CUR))
 		return 0;
 
 	/* allocate destination buffer */
