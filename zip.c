@@ -427,6 +427,7 @@ u32 zip_get_file (struct zip_Object* obj, int n, u8** dest_ptr) {
 	if (fseek (fstream, (cdfh_n->offset + ZIP_LFH_FIXED_SIZE + fnl + efl), SEEK_SET))
 		return 0;
 
+printf ("ftell()=%d\n", ftell (fstream));
 	/* allocate destination buffer */
 	*dest_ptr = malloc (uncomp_size);
 	if (!(*dest_ptr)) {
@@ -444,11 +445,27 @@ u32 zip_get_file (struct zip_Object* obj, int n, u8** dest_ptr) {
 		}
 	}
 	else if (comp_method == ZIP_APPEND_DEFLATE_COMPRESSION) {
-		printf ("comp_method==ZIP_APPEND_DEFLATE_COMPRESSION, calling comp_inflate()\n");
-		if (uncomp_size != comp_inflate (*dest_ptr, uncomp_size, fstream, comp_size)) {
+		u8* src;
+		src = malloc (comp_size);
+		if (!src) {
+			fprintf (stderr, "ERROR: memory allocation failed2 in zip_get_file()\n");
+			exit (EXIT_FAILURE);
+		}
+		if (comp_size != fread (src, 1, comp_size, fstream)) {
+			free (src);
 			free (*dest_ptr);
 			*dest_ptr = NULL;
 			return 0;
+		}
+		printf ("comp_method==ZIP_APPEND_DEFLATE_COMPRESSION, calling comp_inflate()\n");
+		if (uncomp_size != comp_inflate (*dest_ptr, uncomp_size, src, comp_size)) {
+			free (src);
+			free (*dest_ptr);
+			*dest_ptr = NULL;
+			return 0;
+		}
+		else {
+			free (src);
 		}
 	}
 	else {

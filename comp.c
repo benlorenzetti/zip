@@ -233,7 +233,8 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 			for (int i=0; i<hclen; i++) {
 				int code_length;
 				code_length = get_data_element (src, &index, &bit, 3);
-				cl_tree[i].key = 1 << code_length;
+				if (code_length)
+					cl_tree[i].key = 2 << code_length;
 			}
 
 			/* go to next state */
@@ -273,6 +274,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 
 		else if (block_state == READ_LENGTH_LITERAL_CODE_LENGTHS)
 		{
+			printf ("READ_LENGTH_LITERAL_CODE_LENGTHS\n");
 			initialize_pair_array (ll_tree, LITERAL_LENGTH_TREE_SIZE);
 			/* need to read hlit number of codes */
 			for (int i=0; i<hlit; i++) 
@@ -292,10 +294,13 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 				/* if no match was found, then the data must be bad */
 				if (!match)
 					return size;
+else
+	printf ("match found, i=%d, match->key=%d, match->value=%d\n", i, match->key, match->value);
 	
 				/* take action and choose next state base on the literal/length value */
 				if (match->value < 16) {
-					ll_tree[i].key = 1 << match->value;
+					if (match->value)
+						ll_tree[i].key = 1 << match->value;
 				}
 				else if (!i) {
 					return 0; /* cannot repeat previous code lengths if i=0 */
@@ -328,12 +333,14 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 				/* continue to next literal/length code */
 			}	
 			
+			printf ("proceeding to next state...\n");	
 			/* go to next state */
 			block_state = READ_DISTANCE_CODE_LENGTHS;
 		}
 
 		else if (block_state == READ_DISTANCE_CODE_LENGTHS)
 		{
+			printf ("READ_DISTANCE_CODE_LENGTHS\n");
 			initialize_pair_array (d_tree, DISTANCE_TREE_SIZE);
 			/* need to read hlit number of codes */
 			for (int i=0; i<hdist; i++) 
@@ -356,7 +363,8 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 	
 				/* take action and choose next state base on the literal/length value */
 				if (match->value < 16) {
-					d_tree[i].key = 1 << match->value;
+					if (match->value)
+						d_tree[i].key = 2 << match->value;
 				}
 				else if (!i) {
 					return 0; /* cannot repeat previous code lengths if i=0 */
@@ -396,7 +404,9 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 			/* go to next state */
 			block_state = BUILD_CODE_TREES;
 		}
-	
+
+		if (index >= src_size)
+			printf ("index exceeds bounds.\n");	
 	}
 
 	return size;
@@ -409,8 +419,8 @@ int get_data_element (const u8* data_stream, u32* current_byte, int* current_bit
 	for (int i=0; i<number_of_bits; i++) {
 		byte = data_stream[*current_byte];
 		bit = (byte & (1 << (*current_bit))) >> (*current_bit);
-		data_element += bit << (15-i);
-		printf ("*current_byte=%d, *current_bit=%d, byte=%d, bit=%d, data_element=%d\n", *current_byte, *current_bit, byte, bit, data_element);
+		data_element += bit << i;
+//		printf ("*current_byte=%d, *current_bit=%d, byte=%d, bit=%d, data_element=%d\n", *current_byte, *current_bit, byte, bit, data_element);
 		(*current_bit)++;
 		(*current_byte) += (*current_bit) / 8;
 		(*current_bit) %= 8;
@@ -465,8 +475,17 @@ int key_cmp (const void* p1, const void* p2)
 	key1 = ((pair*) p1)->key;
 	key2 = ((pair*) p2)->key;
 	
+	/* if a key is 0 or 1, then it is uninitialized or has length 0;
+	therefore, it should be sorted to the back of all arrays */
+	if (key1 <= 1 && key2 <= 1)
+		return 0;
+	else if (key1 <= 1)
+		return 1;
+	else if (key2 <= 1)
+		return -1;
+
 	/* compare keys */
-	if (key1 < key2)
+	else if (key1 < key2)
 		return -1;
 	else if (key1 > key2)
 		return 1;
