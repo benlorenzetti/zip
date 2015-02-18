@@ -1,6 +1,7 @@
 #include "comp.h"
 #include <stdlib.h>
 #include <stdio.h>
+#include <limits.h>
 
 typedef unsigned long u32;
 typedef unsigned short u16;
@@ -15,9 +16,11 @@ struct key_value_pair {
 u8 get_bits (const u8*, u32*, u8*, u8);
 void initialize_pair_array (pair*, int);
 int pair_cmp (const void*, const void*);
+int key_cmp (const void*, const void*);
 
 const int LITERAL_LENGTH_TREE_SIZE = 288;
 const int DISTANCE_TREE_SIZE = 30;
+#define CODE_LENGTH_TREE_SIZE 19
 
 const int NEW_BLOCK = 0;
 const int GET_BLOCK_LENGTH = 1;						/* jump here if no compression */
@@ -36,13 +39,17 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 
 	int block_state, last_block_bool;
 	u32 index, size; /* index into source and size written to dest */
+	u16 length_value;
 	u8 bit;
 	pair ll_tree[LITERAL_LENGTH_TREE_SIZE];
 	pair d_tree[DISTANCE_TREE_SIZE];
+	pair cl_tree[CODE_LENGTH_TREE_SIZE];
+	u16 hlit, hdist, hclen;
 
 	block_state = NEW_BLOCK;
 	last_block_bool = 0;
 	index = 0;
+	length_value = 0;
 	size = 0;
 	bit = 0;
 	while ((index < src_size && size < dest_size) && 
@@ -96,7 +103,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 			qsort (ll_tree, LITERAL_LENGTH_TREE_SIZE, sizeof (ll_tree[0]), pair_cmp);
 			qsort (d_tree, DISTANCE_TREE_SIZE, sizeof (d_tree[0]), pair_cmp);
 
-			/* assign codes based on code length and order in array */
+			/* assign literal/length codes based on code length and order in array */
 			u32 new_code, prev_length_bit;
 			new_code = 0;
 			prev_length_bit = 1;
@@ -106,10 +113,14 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 					new_code *= (ll_tree[i].key / prev_length_bit);
 					prev_length_bit = ll_tree[i].key;
 				}
+				/* if the code length bit is 1 or 0, remaining codes need not be filled */
+				if (ll_tree[i].key <= 1)
+					break;
 				ll_tree[i].key |= new_code;
 				new_code++;
 			}
 
+			/* assign distance codes */
 			new_code = 0;
 			prev_length_bit = 1;
 			for (int i=0; i<DISTANCE_TREE_SIZE; i++) {
@@ -117,6 +128,8 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 					new_code *= (ll_tree[i].key / prev_length_bit);
 					prev_length_bit = d_tree[i].key;
 				}
+				if (d_tree[i].key <= 1)
+					break;
 				d_tree[i].key |= new_code;
 				new_code++;
 			}
@@ -127,19 +140,256 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 			printf ("Distance Code-Value Pairs:\n");
 			for (int i=0; i<DISTANCE_TREE_SIZE; i++)
 				printf ("\t%d\t%d\n", d_tree[i].key, d_tree[i].value);
+			
+			/* go to next state */
+			block_state = DECODE_DATA;
+		}
+
+		else if (block_state == DECODE_DATA)
+		{
+			pair* match;
+			pair code;
+
+			/* parse bitwise until a length/literal code is found */
+			match = NULL;
+			code.key = 1; /* 1 is the length indicator bit */
+			while (!match && code.key < ULONG_MAX) {
+				code.key <<= 1;
+				code.key |= get_bits (src, &index, &bit, 1);
+				match = bsearch ((void*) &code, (void*) ll_tree, LITERAL_LENGTH_TREE_SIZE, sizeof (ll_tree[0]), key_cmp);	
+			}
+
+			/* if no match was found, then the data must be bad */
+			if (!match)
+				return size;
+
+			/* take action and choose next state base on the literal/length value */
+			if (match->value < 256) {
+				printf ("%c", (char) match->value);
+				dest[size++] = match->value;
+				block_state = DECODE_DATA;
+			}
+			else if (match->value == 256) {
+				block_state = NEW_BLOCK;
+			}
+			else {
+				length_value = match->value;
+				block_state = DECODE_DISTANCE;				
+			}
+		}
+
+		else if (block_state == DECODE_DISTANCE)
+		{
+			printf ("distance!\n");
 			break;
 		}
+		
+		else if (block_state == READ_TREE_METADATA)
+		{
+			/* Read the remainder of the block header for dynamic coding */
+			hlit = 257 + get_bits (src, &index, &bit, 5);
+			hdist = 1 + get_bits (src, &index, &bit, 5);
+			hclen = 4 + get_bits (src, &index, &bit, 4);
+			printf ("READ_TREE_METADATA, hlit=%d, hdist=%d, hclen=%d\n", hlit, hdist, hclen);
+
+			block_state = READ_CODE_LENGTH_CODE_LENGTHS;
+		}
+
+		else if (block_state == READ_CODE_LENGTH_CODE_LENGTHS)
+		{
+			/* initialize code length literals in the code length tree */
+			const u16 CL_LITERALS[CODE_LENGTH_TREE_SIZE] = {
+				16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15
+			};
+			for (int i=0; i<CODE_LENGTH_TREE_SIZE; i++) {
+				cl_tree[i].key = 0;
+				cl_tree[i].value = CL_LITERALS[i];
+			}
+
+			/* read code lengths; each is 3 bits */
+			for (int i=0; i<hclen; i++) {
+				int code_length;
+				code_length = get_bits (src, &index, &bit, 3);
+				cl_tree[i].key = 1 << code_length;
+			}
+
+			/* go to next state */
+			block_state = BUILD_CODE_LENGTH_CODE_TREE;
+		}
+
+		else if (block_state == BUILD_CODE_LENGTH_CODE_TREE)
+		{
+			/* sort the code trees by code length, then literal value */
+			qsort (cl_tree, CODE_LENGTH_TREE_SIZE, sizeof (cl_tree[0]), pair_cmp);
+
+			/* assign literal/length codes based on code length and order in array */
+			u32 new_code, prev_length_bit;
+			new_code = 0;
+			prev_length_bit = 1;
+			for (int i=0; i<CODE_LENGTH_TREE_SIZE; i++) {
+				/* if the code length changes, bit shift code by delta length */
+				if (cl_tree[i].key > prev_length_bit) {
+					new_code *= (cl_tree[i].key / prev_length_bit);
+					prev_length_bit = cl_tree[i].key;
+				}
+				/* if the code length bit is 1 or 0, remaining codes need not be filled */
+				if (cl_tree[i].key <= 1)
+					break;
+				cl_tree[i].key |= new_code;
+				new_code++;
+			}
+
+			printf ("Code Length Tree, Code-Value Pairs:\n");
+			for (int i=0; i<CODE_LENGTH_TREE_SIZE; i++)
+				printf ("\t%d\t%d\n", cl_tree[i].key, cl_tree[i].value);
+		
+			/* go to next state */
+			block_state = READ_LENGTH_LITERAL_CODE_LENGTHS;
+		}
+
+		else if (block_state == READ_LENGTH_LITERAL_CODE_LENGTHS)
+		{
+			initialize_pair_array (ll_tree, LITERAL_LENGTH_TREE_SIZE);
+			/* need to read hlit number of codes */
+			for (int i=0; i<hlit; i++) 
+			{
+				pair* match;
+				pair code;
+
+				/* parse bitwise until a code length code is found */
+				match = NULL;
+				code.key = 1; /* 1 is the length indicator bit */
+				while (!match && code.key < ULONG_MAX) {
+					code.key <<= 1;
+					code.key |= get_bits (src, &index, &bit, 1);
+					match = bsearch ((void*) &code, (void*) cl_tree, CODE_LENGTH_TREE_SIZE, sizeof (cl_tree[0]), key_cmp);	
+				}
+	
+				/* if no match was found, then the data must be bad */
+				if (!match)
+					return size;
+				else
+					printf ("i=%d, match->key=%d, match->value=%d\n", i, match->key, match->value);
+	
+				/* take action and choose next state base on the literal/length value */
+				if (match->value < 16) {
+					ll_tree[i].key = 1 << match->value;
+				}
+				else if (!i) {
+					return 0; /* cannot repeat previous code lengths if i=0 */
+				}
+				else if (match->value == 16) {
+					int repeat_length;
+					repeat_length = 3 + get_bits (src, &index, &bit, 2);
+					for (int j=0; j<repeat_length; j++) {
+						ll_tree[i].key = ll_tree[i-1].key;
+						i++;
+					}
+				}
+				else if (match->value == 17) {
+					int repeat_length;
+					repeat_length = 3 + get_bits (src, &index, &bit, 3);
+					for (int j=0; j<repeat_length; j++) {
+						ll_tree[i].key = ll_tree[i-1].key;
+						i++;
+					}
+				}
+				else {
+					int repeat_length;
+					repeat_length = 11 + get_bits (src, &index, &bit, 3);
+					for (int j=0; j<repeat_length; j++) {
+						ll_tree[i].key = ll_tree[i-1].key;
+						i++;
+					}
+				}
+				
+				/* continue to next literal/length code */
+			}	
+			
+			printf ("Literal/Length Code-Value Pairs:\n");
+			for (int i=0; i<LITERAL_LENGTH_TREE_SIZE; i++)
+				printf ("\t%d\t%d\n", ll_tree[i].key, ll_tree[i].value);
+
+			/* go to next state */
+			block_state = READ_DISTANCE_CODE_LENGTHS;
+		}
+
+		else if (block_state == READ_DISTANCE_CODE_LENGTHS)
+		{
+			initialize_pair_array (d_tree, DISTANCE_TREE_SIZE);
+			/* need to read hlit number of codes */
+			for (int i=0; i<hdist; i++) 
+			{
+				pair* match;
+				pair code;
+
+				/* parse bitwise until a code length code is found */
+				match = NULL;
+				code.key = 1; /* 1 is the length indicator bit */
+				while (!match && code.key < ULONG_MAX) {
+					code.key <<= 1;
+					code.key |= get_bits (src, &index, &bit, 1);
+					match = bsearch ((void*) &code, (void*) cl_tree, CODE_LENGTH_TREE_SIZE, sizeof (cl_tree[0]), key_cmp);	
+				}
+	
+				/* if no match was found, then the data must be bad */
+				if (!match)
+					return size;
+	
+				/* take action and choose next state base on the literal/length value */
+				if (match->value < 16) {
+					d_tree[i].key = 1 << match->value;
+				}
+				else if (!i) {
+					return 0; /* cannot repeat previous code lengths if i=0 */
+				}
+				else if (match->value == 16) {
+					int repeat_length;
+					repeat_length = 3 + get_bits (src, &index, &bit, 2);
+					for (int j=0; j<repeat_length; j++) {
+						d_tree[i].key = d_tree[i-1].key;
+						i++;
+					}
+				}
+				else if (match->value == 17) {
+					int repeat_length;
+					repeat_length = 3 + get_bits (src, &index, &bit, 3);
+					for (int j=0; j<repeat_length; j++) {
+						d_tree[i].key = d_tree[i-1].key;
+						i++;
+					}
+				}
+				else {
+					int repeat_length;
+					repeat_length = 11 + get_bits (src, &index, &bit, 3);
+					for (int j=0; j<repeat_length; j++) {
+						d_tree[i].key = d_tree[i-1].key;
+						i++;
+					}
+				}
+				
+				/* continue to next distance code */
+			}	
+			
+			printf ("Distance Tree Code-Value Pairs:\n");
+			for (int i=0; i<DISTANCE_TREE_SIZE; i++)
+				printf ("\t%d\t%d\n", d_tree[i].key, d_tree[i].value);
+
+			/* go to next state */
+			block_state = BUILD_CODE_TREES;
+		}
+	
 	}
 
-	return dest_size;
+	return size;
 } 
 
 u8 get_bits (const u8* data_stream, u32* current_byte, u8* current_bit, u8 number_of_bits) {
-	u8 value;
+	u8 value, bit;
 	value = 0;
 	for (int i=0; i<number_of_bits; i++) {
-		value << 1;
-		value |= (data_stream[*current_byte] & (1 << (*current_bit & 8))) >> (*current_bit & 8);
+		bit = (data_stream[*current_byte] & (1 << (*current_bit & 8))) >> (*current_bit & 8);
+		value |= bit << i;
 		(*current_bit)++;
 		(*current_byte) += !((*current_bit) & 8) ? 1 : 0;
 	}
@@ -184,6 +434,25 @@ int pair_cmp (const void* p1, const void* p2)
 		return 1;
 	else if (val1 < val2)
 		return -1;
+	else
+		return 0;
+}
+
+int key_cmp (const void* p1, const void* p2)
+{
+	u32 key1, key2;
+	key1 = ((pair*) p1)->key;
+	key2 = ((pair*) p2)->key;
+	if (key1 <= 1 && key1 > key2)
+		return 1;
+	else if (key1 <= 1)
+		return -1;
+	else if (key2 <= 1)
+		return -1;
+	else if (key1 < key2)
+		return -1;
+	else if (key1 > key2)
+		return 1;
 	else
 		return 0;
 }
