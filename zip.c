@@ -339,17 +339,17 @@ unsigned long zip_get_file_length (struct zip_Object* obj, int n) {
 	}
 }
 
-u32 zip_get_file (struct zip_Object* obj, int n, u8** dest_ptr) {
+u32 zip_get_file_raw (struct zip_Object* obj, int n, u8** dest_ptr) {
 	
 	if (*dest_ptr) {
-		fprintf (stderr, "ERROR: zip_get_file() allocates memory for the destination; ");
+		fprintf (stderr, "zip_get_file_raw() allocates memory for the destination; ");
 		fprintf (stderr, "the destination parameter MUST be NULL.\n");
 		exit (EXIT_FAILURE);	
 	}
 	
 	/* check that n is in bounds and state is Ok */
 	if (obj->state != ZIP_STATE_CENTRAL_DIRECTORY_COMPLETE) {
-		printf ("zip_get_file() error: central directory is not complete;");
+		printf ("zip_get_file_raw() error: central directory is not complete;");
 		printf (" it cannot be parsed.\n");
 		exit (EXIT_FAILURE);
 	}
@@ -427,7 +427,6 @@ u32 zip_get_file (struct zip_Object* obj, int n, u8** dest_ptr) {
 	if (fseek (fstream, (cdfh_n->offset + ZIP_LFH_FIXED_SIZE + fnl + efl), SEEK_SET))
 		return 0;
 
-printf ("ftell()=%d\n", ftell (fstream));
 	/* allocate destination buffer */
 	*dest_ptr = malloc (uncomp_size);
 	if (!(*dest_ptr)) {
@@ -435,47 +434,70 @@ printf ("ftell()=%d\n", ftell (fstream));
 		exit (EXIT_FAILURE);
 	}
 
-	/* decompress the data */
-	if (comp_method == ZIP_APPEND_NO_COMPRESSION) {
-		printf ("comp_method==ZIP_APPEND_NO_COMPRESSION\n");
-		if (uncomp_size != fread (*dest_ptr, 1, uncomp_size, fstream)) {
-			free (*dest_ptr);
-			*dest_ptr = NULL;
-			return 0;
-		}
-	}
-	else if (comp_method == ZIP_APPEND_DEFLATE_COMPRESSION) {
-		u8* src;
-		src = malloc (comp_size);
-		if (!src) {
-			fprintf (stderr, "ERROR: memory allocation failed2 in zip_get_file()\n");
-			exit (EXIT_FAILURE);
-		}
-		if (comp_size != fread (src, 1, comp_size, fstream)) {
-			free (src);
-			free (*dest_ptr);
-			*dest_ptr = NULL;
-			return 0;
-		}
-		printf ("comp_method==ZIP_APPEND_DEFLATE_COMPRESSION, calling comp_inflate()\n");
-		if (uncomp_size != comp_inflate (*dest_ptr, uncomp_size, src, comp_size)) {
-			free (src);
-			free (*dest_ptr);
-			*dest_ptr = NULL;
-			return 0;
-		}
-		else {
-			free (src);
-		}
+	/* copy data to the dest buffer */
+	if (comp_size != fread ((*dest_ptr), 1, comp_size, fstream)) {
+		free (*(dest_ptr));
+		*dest_ptr = NULL;
+		fprintf (stderr, "in zip_get_file_raw(), fread() failed to get uncompressed data.\n");
+		return 0;
 	}
 	else {
+		return comp_size;
+	}
+}
+
+u32 zip_get_file (struct zip_Object* obj, int n, u8** dest_ptr)
+{
+	/* check that destination is not preallocated and that n is in bounds */
+	if (*dest_ptr) {
+		fprintf (stderr, "ERROR: zip_get_file() allocates memory for the destination; ");
+		fprintf (stderr, "the destination parameter MUST be NULL.\n");
+		exit (EXIT_FAILURE);	
+	}
+	if (n >= obj->total_cd_entries)
+		return 0;
+
+	/* find the central directory file record for file n */
+	cdfh cdfh_n;
+	FILE* fstream;
+	cdfh_n = obj->central_dir;
+	for (int i=0; i<n; i++)
+		cdfh_n = cdfh_n->next_cdfh;
+
+	/* get the uncompressed data */
+	u8* src;
+	src = NULL;
+	if (cdfh_n->comp_size != zip_get_file_raw (obj, n, &src)) {
+		fprintf (stderr, "zip_get_file_raw() did not return expected uncomp_size.\n");
+		return 0;
+	}
+
+	/* allocate the destination buffer */
+	*dest_ptr = malloc (cdfh_n->uncomp_size);
+	if (!(*dest_ptr)) {
+		fprintf (stderr, "failed to allocated dest_ptr.\n");
+		return 0;
+	}
+
+	/* decompress the data */
+	if (cdfh_n->comp_method == ZIP_APPEND_NO_COMPRESSION) {
+		printf ("comp_method==ZIP_APPEND_NO_COMPRESSION\n");
+		for (u32 i=0; i<cdfh_n->uncomp_size; i++)
+			(*dest_ptr)[i] = src[i];
+		free (src);
+		return cdfh_n->uncomp_size;
+	}
+	else if (cdfh_n->comp_method == ZIP_APPEND_DEFLATE_COMPRESSION) {
+		
+		return -1;
+	}
+	else {
+		fprintf (stderr, "zip file compression method not recognized.\n");
+		free (src);
 		free (*dest_ptr);
 		*dest_ptr = NULL;
 		return 0;
 	}
-	
-
-	return uncomp_size;
 }
 
 void zip_remove_file (struct zip_Object* obj, int n) {
