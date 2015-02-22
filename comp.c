@@ -166,13 +166,6 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 				d_tree[i].key |= new_code;
 				new_code++;
 			}
-
-			printf ("Literal/Length Code-Value Pairs:\n");
-			for (int i=0; i<LITERAL_LENGTH_TREE_SIZE; i++)
-				printf ("\t%d\t%d\n", ll_tree[i].key, ll_tree[i].value);
-			printf ("Distance Code-Value Pairs:\n");
-			for (int i=0; i<DISTANCE_TREE_SIZE; i++)
-				printf ("\t%d\t%d\n", d_tree[i].key, d_tree[i].value);
 		
 			/* go to next state */
 			block_state = DECODE_DATA;
@@ -189,7 +182,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 				while (!match && (code.key < (ULONG_MAX / 2))) {
 					code.key <<= 1;
 					code.key += get_bit (src, &index, &bit);
-					match = bsearch ((void*) &code, (void*) ll_tree, LITERAL_LENGTH_TREE_SIZE, sizeof (ll_tree[0]), key_cmp);	
+					match = bsearch ((void*) &code, (void*) ll_tree, hlit, sizeof (ll_tree[0]), key_cmp);	
 				}
 
 
@@ -226,8 +219,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 			array_index = length_value - MIN_LENGTH_CODE;
 			length_value = BASE_LENGTH[array_index];
 			length_value += get_data_element (src, &index, &bit, EXTRA_BITS[array_index]);
-			printf ("READ_LENGTH_EXTRA_BITS, length_value=%d\n", length_value);
-	
+
 			/* go to next state */
 			block_state = DECODE_DISTANCE;
 		}
@@ -240,11 +232,11 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 			/* parse bitwise until a length/literal code is found */
 			match = NULL;
 			code.key = 1; /* 1 is the length indicator bit */
-				while (!match && (code.key < (ULONG_MAX / 2))) {
-					code.key <<= 1;
-					code.key += get_bit (src, &index, &bit);
-					match = bsearch ((void*) &code, (void*) d_tree, DISTANCE_TREE_SIZE, sizeof (d_tree[0]), key_cmp);	
-				}
+			while (!match && (code.key < (ULONG_MAX / 2))) {
+				code.key <<= 1;
+				code.key += get_bit (src, &index, &bit);
+				match = bsearch ((void*) &code, (void*) d_tree, hdist, sizeof (d_tree[0]), key_cmp);	
+			}
 
 
 			/* if no match was found, then the data must be bad */
@@ -272,9 +264,8 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 			d_code = distance_value;
 			distance_value = BASE_LENGTH[d_code];
 			distance_value += get_data_element (src, &index, &bit, EXTRA_BITS[d_code]);
-			printf ("READ_DISTANCE_EXTRA_BITS, code=%d, distance_value=%d\n", d_code, distance_value);
 	
-		/* go to next state */
+			/* go to next state */
 			block_state = COPY_LENGTH_DISTANCE_DATA;
 		}
 
