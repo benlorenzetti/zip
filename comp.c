@@ -157,7 +157,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 			prev_length_bit = 1;
 			for (int i=0; i<hdist; i++) {
 				/* if the code length bit is 1 or 0, code is not used */
-				if (ll_tree[i].key <= 1)
+				if (d_tree[i].key <= 1)
 					continue;
 				if (d_tree[i].key > prev_length_bit) {
 					new_code *= (d_tree[i].key / prev_length_bit);
@@ -166,14 +166,14 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 				d_tree[i].key |= new_code;
 				new_code++;
 			}
-/*
+
 			printf ("Literal/Length Code-Value Pairs:\n");
 			for (int i=0; i<LITERAL_LENGTH_TREE_SIZE; i++)
 				printf ("\t%d\t%d\n", ll_tree[i].key, ll_tree[i].value);
 			printf ("Distance Code-Value Pairs:\n");
 			for (int i=0; i<DISTANCE_TREE_SIZE; i++)
 				printf ("\t%d\t%d\n", d_tree[i].key, d_tree[i].value);
-*/			
+		
 			/* go to next state */
 			block_state = DECODE_DATA;
 		}
@@ -364,7 +364,8 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 			/* need to read hlit + hdist number of codes */
 			pair* match;
 			pair code;
-			for (int i=0; i<hlit + hdist; i++) 
+			int i = 0;
+			while (i < hlit + hdist)
 			{
 				/* parse bitwise until a code length code is found */
 				match = NULL;
@@ -383,7 +384,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 	
 				/* take action and choose next state base on the literal/length value */
 				if (match->value < 16) {
-					contiguous_trees[i].key = 1 << match->value;
+					contiguous_trees[i++].key = 1 << match->value;
 				}
 				else if (match->value == 16) {
 					if (!i) {
@@ -406,21 +407,13 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 				}
 				else {
 					int repeat_length;
-					repeat_length = 11 + get_data_element (src, &index, &bit, 3);
+					repeat_length = 11 + get_data_element (src, &index, &bit, 7);
 					for (int j=0; j<repeat_length; j++)
 						contiguous_trees[i++].key = 1;
 				}
 				
 				/* continue to next literal/length code */
 			}	
-
-			printf ("Literal/Length Code-Value Pairs:\n");
-			for (int i=0; i<LITERAL_LENGTH_TREE_SIZE; i++)
-				printf ("\t%d\t%d\n", ll_tree[i].key, ll_tree[i].value);
-			printf ("Distance Code-Value Pairs:\n");
-			for (int i=0; i<DISTANCE_TREE_SIZE; i++)
-				printf ("\t%d\t%d\n", d_tree[i].key, d_tree[i].value);
-			
 
 			/* go to next state */
 			block_state = BUILD_CODE_TREES;
