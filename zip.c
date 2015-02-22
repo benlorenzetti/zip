@@ -482,14 +482,24 @@ u32 zip_get_file (struct zip_Object* obj, int n, u8** dest_ptr)
 	/* decompress the data */
 	if (cdfh_n->comp_method == ZIP_APPEND_NO_COMPRESSION) {
 		printf ("comp_method==ZIP_APPEND_NO_COMPRESSION\n");
-		for (u32 i=0; i<cdfh_n->uncomp_size; i++)
-			(*dest_ptr)[i] = src[i];
-		free (src);
+		free (*dest_ptr);
+		*dest_ptr = src;
 		return cdfh_n->uncomp_size;
 	}
 	else if (cdfh_n->comp_method == ZIP_APPEND_DEFLATE_COMPRESSION) {
-		
-		return -1;
+		if (cdfh_n->uncomp_size != 
+			comp_inflate (*dest_ptr, cdfh_n->uncomp_size, src, cdfh_n->comp_size)
+		) {
+			fprintf (stderr, "in zip_get_file(), comp_inflate() did not return expected size");
+			free (src);
+			free (*dest_ptr);
+			*dest_ptr = NULL;
+			return 0;
+		}
+		else {
+			free (src);
+			return cdfh_n->uncomp_size;
+		}
 	}
 	else {
 		fprintf (stderr, "zip file compression method not recognized.\n");

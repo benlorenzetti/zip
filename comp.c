@@ -40,8 +40,7 @@ const int COPY_LENGTH_DISTANCE_DATA = 9;
 const int READ_TREE_METADATA = 10;					/* jump here if dynamic Huffman coding */
 const int READ_CODE_LENGTH_CODE_LENGTHS = 11;
 const int BUILD_CODE_LENGTH_CODE_TREE = 12;
-const int READ_LENGTH_LITERAL_CODE_LENGTHS = 13;
-const int READ_DISTANCE_CODE_LENGTHS = 14;
+const int READ_LENGTH_LITERAL_AND_DISTANCE_CODE_LENGTHS = 13;
 
 int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 
@@ -49,10 +48,15 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 	u32 index, size; /* index into source and size written to dest */
 	u16 length_value, distance_value;
 	int bit;
-	pair ll_tree[LITERAL_LENGTH_TREE_SIZE];
-	pair d_tree[DISTANCE_TREE_SIZE];
+	pair contiguous_trees[LITERAL_LENGTH_TREE_SIZE + DISTANCE_TREE_SIZE];
+	pair *ll_tree, *d_tree;
 	pair cl_tree[CODE_LENGTH_TREE_SIZE];
 	u16 hlit, hdist, hclen;
+
+	ll_tree = & (contiguous_trees[0]);
+	d_tree = & (contiguous_trees[LITERAL_LENGTH_TREE_SIZE]);
+	hlit = LITERAL_LENGTH_TREE_SIZE;
+	hdist = DISTANCE_TREE_SIZE;
 
 	block_state = NEW_BLOCK;
 	last_block_bool = 0;
@@ -128,14 +132,14 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 		{
 			printf ("BUILD_CODE_TREES\n");
 			/* sort the code trees by code length, then literal value */
-			qsort (ll_tree, LITERAL_LENGTH_TREE_SIZE, sizeof (ll_tree[0]), pair_cmp);
-			qsort (d_tree, DISTANCE_TREE_SIZE, sizeof (d_tree[0]), pair_cmp);
+			qsort (ll_tree, hlit, sizeof (ll_tree[0]), pair_cmp);
+			qsort (d_tree, hdist, sizeof (d_tree[0]), pair_cmp);
 
 			/* assign literal/length codes based on code length and order in array */
 			u32 new_code, prev_length_bit;
 			new_code = 0;
 			prev_length_bit = 1;
-			for (int i=0; i<LITERAL_LENGTH_TREE_SIZE; i++) {
+			for (int i=0; i<hlit; i++) {
 				/* if the code length bit is 1 or 0, code is not used */
 				if (ll_tree[i].key <= 1)
 					continue;
@@ -151,7 +155,7 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 			/* assign distance codes */
 			new_code = 0;
 			prev_length_bit = 1;
-			for (int i=0; i<DISTANCE_TREE_SIZE; i++) {
+			for (int i=0; i<hdist; i++) {
 				/* if the code length bit is 1 or 0, code is not used */
 				if (ll_tree[i].key <= 1)
 					continue;
@@ -162,14 +166,14 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 				d_tree[i].key |= new_code;
 				new_code++;
 			}
-
+/*
 			printf ("Literal/Length Code-Value Pairs:\n");
 			for (int i=0; i<LITERAL_LENGTH_TREE_SIZE; i++)
 				printf ("\t%d\t%d\n", ll_tree[i].key, ll_tree[i].value);
 			printf ("Distance Code-Value Pairs:\n");
 			for (int i=0; i<DISTANCE_TREE_SIZE; i++)
 				printf ("\t%d\t%d\n", d_tree[i].key, d_tree[i].value);
-			
+*/			
 			/* go to next state */
 			block_state = DECODE_DATA;
 		}
@@ -182,17 +186,6 @@ int comp_inflate (u8* dest, int dest_size, const u8* src, int src_size) {
 			/* parse bitwise until a length/literal code is found */
 			match = NULL;
 			code.key = 1; /* 1 is the length indicator bit */
-/*
-				for (int length = 1; length < (8 * sizeof (code.key)); length++) {
-					code.key ^= (1 << length);
-					code.key |= get_bit (src, &index, &bit) << (length - 1);
-printf ("length=%d, code.key=%d\n", length, code.key);
-					match = bsearch ((void*) &code, (void*) ll_tree, LITERAL_LENGTH_TREE_SIZE, sizeof (ll_tree[0]), key_cmp);
-					if (match)
-						break;
-					code.key ^= (1 << length);
-				}
-*/
 				while (!match && (code.key < (ULONG_MAX / 2))) {
 					code.key <<= 1;
 					code.key += get_bit (src, &index, &bit);
@@ -247,17 +240,6 @@ printf ("length=%d, code.key=%d\n", length, code.key);
 			/* parse bitwise until a length/literal code is found */
 			match = NULL;
 			code.key = 1; /* 1 is the length indicator bit */
-/*
-				for (int length = 1; length < (8 * sizeof (code.key)); length++) {
-					code.key ^= (1 << length);
-					code.key |= get_bit (src, &index, &bit) << (length - 1);
-printf ("length=%d, code.key=%d\n", length, code.key);
-					match = bsearch ((void*) &code, (void*) d_tree, DISTANCE_TREE_SIZE, sizeof (d_tree[0]), key_cmp);
-					if (match)
-						break;
-					code.key ^= (1 << length);
-				}
-*/
 				while (!match && (code.key < (ULONG_MAX / 2))) {
 					code.key <<= 1;
 					code.key += get_bit (src, &index, &bit);
@@ -313,6 +295,7 @@ printf ("length=%d, code.key=%d\n", length, code.key);
 			hdist = 1 + get_data_element (src, &index, &bit, 5);
 			hclen = 4 + get_data_element (src, &index, &bit, 4);
 			printf ("READ_TREE_METADATA, hlit=%d, hdist=%d, hclen=%d\n", hlit, hdist, hclen);
+			d_tree = & (contiguous_trees[hlit]);
 
 			block_state = READ_CODE_LENGTH_CODE_LENGTHS;
 		}
@@ -368,189 +351,76 @@ printf ("length=%d, code.key=%d\n", length, code.key);
 				printf ("\t%d\t%d\n", cl_tree[i].key, cl_tree[i].value);
 		
 			/* go to next state */
-			block_state = READ_LENGTH_LITERAL_CODE_LENGTHS;
+			block_state = READ_LENGTH_LITERAL_AND_DISTANCE_CODE_LENGTHS;
 		}
 
-		else if (block_state == READ_LENGTH_LITERAL_CODE_LENGTHS)
+		else if (block_state == READ_LENGTH_LITERAL_AND_DISTANCE_CODE_LENGTHS)
 		{
-			printf ("READ_LENGTH_LITERAL_CODE_LENGTHS\n");
+			printf ("READ_LENGTH_LITERAL_AND_DISTANCE_CODE_LENGTHS\n");
+			/* load sequenctial values into the Length/Literal and Distance Trees */
 			initialize_pair_array (ll_tree, LITERAL_LENGTH_TREE_SIZE);
-			/* need to read hlit number of codes */
+			initialize_pair_array (d_tree, DISTANCE_TREE_SIZE);
+
+			/* need to read hlit + hdist number of codes */
 			pair* match;
 			pair code;
-			for (int i=0; i<hlit; i++) 
+			for (int i=0; i<hlit + hdist; i++) 
 			{
 				/* parse bitwise until a code length code is found */
 				match = NULL;
-				code.key = 0; /* 1 is the length indicator bit */
-/*
-				for (int length = 1; length < (8 * sizeof (code.key)); length++) {
-					code.key ^= (1 << length);
-					code.key |= get_bit (src, &index, &bit) << (length - 1);
-printf ("length=%d, code.key=%d\n", length, code.key);
-					match = bsearch ((void*) &code, (void*) cl_tree, CODE_LENGTH_TREE_SIZE, sizeof (cl_tree[0]), key_cmp);
-					if (match)
-						break;
-					code.key ^= (1 << length);
-				}
-*/
-				code.key = 1;
+				code.key = 1; /* 1 is the length indicator bit */
 				while (!match && (code.key < (ULONG_MAX / 2))) {
 					code.key <<= 1;
 					code.key += get_bit (src, &index, &bit);
-//printf ("code.key=%d\n", code.key);
 					match = bsearch ((void*) &code, (void*) cl_tree, CODE_LENGTH_TREE_SIZE, sizeof (cl_tree[0]), key_cmp);	
 				}
 	
 				/* if no match was found, then the data must be bad */
-				if (!match)
-					return size;
+				if (!match) {
+					fprintf (stderr, "in comp_inflate(), could not decode dynamic code lengths, no match found.\n");
+					return 0;
+				}
 	
 				/* take action and choose next state base on the literal/length value */
 				if (match->value < 16) {
-					if (match->value)
-						ll_tree[i].key = 1 << match->value;
+					contiguous_trees[i].key = 1 << match->value;
 				}
-				else if (!i) {
-//					return 0; /* cannot repeat previous code lengths if i=0 */
-//				}
-
-if (match->value == 16) {
-	int repeat_length;
-	repeat_length = 3 + get_data_element (src, &index, &bit, 2);
-	for (int j=0; j<repeat_length; j++)
-		ll_tree[i++].key = 0;
-}				
-else if (match->value == 17) {
-	int repeat_length;
-	repeat_length = 3 + get_data_element (src, &index, &bit, 3);
-	for (int j=0; j<repeat_length; j++)
-		ll_tree[i++].key = 0;
-}
-else {
-	int repeat_length;
-	repeat_length = 11 + get_data_element (src, &index, &bit, 3);
-	for (int j=0; j<repeat_length; j++)
-		ll_tree[i++].key = 0;
-}
-}
-
 				else if (match->value == 16) {
+					if (!i) {
+						fprintf (stderr, "in comp_inflate(), cannot build dynamic huffman tree;");
+						fprintf (stderr, "repeat code 16 encountered without any prior lengths.\n");
+						return 0;
+					}
 					int repeat_length;
 					repeat_length = 3 + get_data_element (src, &index, &bit, 2);
 					for (int j=0; j<repeat_length; j++) {
-						ll_tree[i].key = ll_tree[i-1].key;
+						contiguous_trees[i].key = contiguous_trees[i-1].key;
 						i++;
 					}
 				}
 				else if (match->value == 17) {
 					int repeat_length;
 					repeat_length = 3 + get_data_element (src, &index, &bit, 3);
-					for (int j=0; j<repeat_length; j++) {
-						ll_tree[i].key = ll_tree[i-1].key;
-						i++;
-					}
+					for (int j=0; j<repeat_length; j++)
+						contiguous_trees[i++].key = 1;
 				}
 				else {
 					int repeat_length;
 					repeat_length = 11 + get_data_element (src, &index, &bit, 3);
-					for (int j=0; j<repeat_length; j++) {
-						ll_tree[i].key = ll_tree[i-1].key;
-						i++;
-					}
+					for (int j=0; j<repeat_length; j++)
+						contiguous_trees[i++].key = 1;
 				}
 				
 				/* continue to next literal/length code */
 			}	
-			
-			printf ("proceeding to next state...\n");	
-			/* go to next state */
-			block_state = READ_DISTANCE_CODE_LENGTHS;
-		}
 
-		else if (block_state == READ_DISTANCE_CODE_LENGTHS)
-		{
-			printf ("READ_DISTANCE_CODE_LENGTHS\n");
-			initialize_pair_array (d_tree, DISTANCE_TREE_SIZE);
-			/* need to read hlit number of codes */
-			for (int i=0; i<hdist; i++) 
-			{
-				pair* match;
-				pair code;
-
-				/* parse bitwise until a code length code is found */
-				match = NULL;
-				code.key = 1; /* 1 is the length indicator bit */
-				while (!match && (code.key < ULONG_MAX / 2)) {
-					code.key <<= 1;
-					code.key |= get_bit (src, &index, &bit);
-					match = bsearch ((void*) &code, (void*) cl_tree, CODE_LENGTH_TREE_SIZE, sizeof (cl_tree[0]), key_cmp);	
-				}
-	
-				/* if no match was found, then the data must be bad */
-				if (!match)
-					return size;
-	
-				/* take action and choose next state base on the literal/length value */
-				if (match->value < 16) {
-					if (match->value)
-						d_tree[i].key = 2 << match->value;
-				}
-				else if (!i) {
-//					return 0; /* cannot repeat previous code lengths if i=0 */
-//				}
-	
-if (match->value == 16) {
-	int repeat_length;
-	repeat_length = 3 + get_data_element (src, &index, &bit, 2);
-	for (int j=0; j<repeat_length; j++)
-		d_tree[i++].key = 0;
-}				
-else if (match->value == 17) {
-	int repeat_length;
-	repeat_length = 3 + get_data_element (src, &index, &bit, 3);
-	for (int j=0; j<repeat_length; j++)
-		d_tree[i++].key = 0;
-}
-else {
-	int repeat_length;
-	repeat_length = 11 + get_data_element (src, &index, &bit, 3);
-	for (int j=0; j<repeat_length; j++)
-		d_tree[i++].key = 0;
-}
-}
-
-			else if (match->value == 16) {
-					int repeat_length;
-					repeat_length = 3 + get_data_element (src, &index, &bit, 2);
-					for (int j=0; j<repeat_length; j++) {
-						d_tree[i].key = d_tree[i-1].key;
-						i++;
-					}
-				}
-				else if (match->value == 17) {
-					int repeat_length;
-					repeat_length = 3 + get_data_element (src, &index, &bit, 3);
-					for (int j=0; j<repeat_length; j++) {
-						d_tree[i].key = d_tree[i-1].key;
-						i++;
-					}
-				}
-				else {
-					int repeat_length;
-					repeat_length = 11 + get_data_element (src, &index, &bit, 3);
-					for (int j=0; j<repeat_length; j++) {
-						d_tree[i].key = d_tree[i-1].key;
-						i++;
-					}
-				}
-				
-				/* continue to next distance code */
-			}	
-			
-			printf ("Distance Tree Code-Value Pairs:\n");
+			printf ("Literal/Length Code-Value Pairs:\n");
+			for (int i=0; i<LITERAL_LENGTH_TREE_SIZE; i++)
+				printf ("\t%d\t%d\n", ll_tree[i].key, ll_tree[i].value);
+			printf ("Distance Code-Value Pairs:\n");
 			for (int i=0; i<DISTANCE_TREE_SIZE; i++)
 				printf ("\t%d\t%d\n", d_tree[i].key, d_tree[i].value);
+			
 
 			/* go to next state */
 			block_state = BUILD_CODE_TREES;
@@ -558,6 +428,7 @@ else {
 
 		if (index >= src_size)
 			printf ("index exceeds bounds.\n");	
+		/* otherwise, continue reading the compressed data */
 	}
 
 	return size;
@@ -571,7 +442,6 @@ int get_data_element (const u8* data_stream, u32* current_byte, int* current_bit
 		byte = data_stream[*current_byte];
 		bit = (byte & (1 << (*current_bit))) >> (*current_bit);
 		data_element += bit << i;
-//		data_element += bit << (number_of_bits - 1 - i);
 		(*current_bit)++;
 		(*current_byte) += (*current_bit) / 8;
 		(*current_bit) %= 8;
